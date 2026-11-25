@@ -38,7 +38,8 @@ export default function Register() {
 
   const handleGoogle = async () => {
     try {
-      const result = await api.auth.signInSocial({ provider: "google", callbackURL: returnTo })
+      const callbackURL = new URL(returnTo, window.location.origin).toString()
+      const result = await api.auth.signInSocial({ provider: "google", callbackURL })
       if (!result.url) throw new Error("Google sign-in is not configured on this server.")
       window.location.assign(result.url)
     } catch (requestError) {

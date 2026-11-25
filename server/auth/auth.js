@@ -10,7 +10,7 @@ export const auth = betterAuth({
   database: pool,
   secret: config.authSecret,
   baseURL: config.authUrl,
-  trustedOrigins: [config.webOrigin],
+  trustedOrigins: config.trustedOrigins,
   emailAndPassword: {
     enabled: true,
     requireEmailVerification: false,
@@ -37,6 +37,7 @@ export const auth = betterAuth({
     useSecureCookies: config.isProduction,
     defaultCookieAttributes: {
       sameSite: config.isProduction ? 'none' : 'lax',
+      secure: config.isProduction,
     },
   },
 })

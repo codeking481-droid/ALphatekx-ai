@@ -1,7 +1,5 @@
 import express from 'express'
 import multer from 'multer'
-import path from 'node:path'
-import { fileURLToPath } from 'node:url'
 import { fromNodeHeaders, toNodeHandler } from 'better-auth/node'
 import { auth } from '../auth/auth.js'
 import { requireUser } from '../auth/session.js'
@@ -46,7 +44,6 @@ import { createRateLimiter } from './rate-limit.js'
 const app = express()
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_FILE_BYTES, files: 1 } })
 const skillUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 64 * 1024, files: 1 } })
-const frontendDirectory = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../dist')
 const chatRateLimit = createRateLimiter({ limit: 10, windowMs: 60_000 })
 registerWebSearchTool()
 registerFileTools()
@@ -669,11 +666,6 @@ app.post('/api/approvals/:approvalId', requireUser, requireObjectBody, async (re
     next(error)
   }
 })
-
-if (config.isProduction) {
-  app.use(express.static(frontendDirectory, { index: false }))
-  app.get('*', (_req, res) => res.sendFile(path.join(frontendDirectory, 'index.html')))
-}
 
 app.use((error, _req, res, _next) => {
   if (error instanceof multer.MulterError) {

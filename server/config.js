@@ -4,15 +4,20 @@ import { fileURLToPath } from 'node:url'
 
 const isProduction = process.env.NODE_ENV === 'production'
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+const webOrigin = process.env.WEB_ORIGIN || (isProduction ? 'https://alphatekx-ai.pages.dev' : 'http://localhost:5173')
+const authUrl = process.env.BETTER_AUTH_URL || (
+  isProduction ? 'https://129.213.161.206.sslip.io' : `http://localhost:${process.env.PORT || 3001}`
+)
 
 export const config = {
   nodeEnv: process.env.NODE_ENV || 'development',
   isProduction,
   port: Number(process.env.PORT || 3001),
-  webOrigin: process.env.WEB_ORIGIN || 'http://localhost:5173',
+  webOrigin: new URL(webOrigin).origin,
+  trustedOrigins: [...new Set([new URL(webOrigin).origin, new URL(authUrl).origin])],
   databaseUrl: process.env.DATABASE_URL,
   authSecret: process.env.BETTER_AUTH_SECRET,
-  authUrl: process.env.BETTER_AUTH_URL || `http://localhost:${process.env.PORT || 3001}`,
+  authUrl,
   uploadDir: process.env.UPLOAD_DIR || './uploads',
   workspaceDir: path.resolve(projectRoot, process.env.WORKSPACE_DIR || 'workspace'),
   skillsDir: path.resolve(projectRoot, 'skills'),
