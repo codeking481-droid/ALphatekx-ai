@@ -31,6 +31,7 @@ import { registerWebSearchTool } from '../tools/web-search.js'
 import { registerFileTools } from '../tools/file-tools.js'
 import { registerSkillCreateTool } from '../skills/skill-create.js'
 import { extractSkillMarkdown } from '../skills/archive.js'
+import { createCorsMiddleware } from './cors.js'
 import {
   decideSkillApproval,
   installSkill,
@@ -53,15 +54,9 @@ registerSkillCreateTool()
 
 app.disable('x-powered-by')
 app.use(requestContext)
+app.use('/api', createCorsMiddleware(config.webOrigin))
 app.all('/api/auth/*', toNodeHandler(auth))
 app.use(express.json({ limit: '1mb' }))
-app.use((req, res, next) => {
-  const origin = req.get('origin')
-  if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method) && origin && origin !== config.webOrigin) {
-    return res.status(403).json({ error: 'Request origin is not allowed.' })
-  }
-  next()
-})
 
 app.get('/api/health', async (_req, res, next) => {
   try {

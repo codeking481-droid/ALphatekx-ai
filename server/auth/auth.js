@@ -35,5 +35,8 @@ export const auth = betterAuth({
   plugins: [twoFactor()],
   advanced: {
     useSecureCookies: config.isProduction,
+    defaultCookieAttributes: {
+      sameSite: config.isProduction ? 'none' : 'lax',
+    },
   },
 })

@@ -38,7 +38,7 @@ The API owns request validation and authorization; services own application rule
 4. Apply migrations: `npm run db:migrate`.
 5. Start API, the separate job worker, and frontend: `npm run dev`.
 
-The Vite development server proxies `/api` to `http://localhost:3001`. The API health check is at `/api/health`. On production, serve the built `dist` directory and API from one origin, or configure a same-origin reverse proxy. Set `NODE_ENV=production`, `BETTER_AUTH_URL`, `WEB_ORIGIN`, and `DATABASE_URL` for the deployment. Set `PGSSLMODE=require` when the database host requires TLS.
+The Vite development server proxies `/api` to `http://localhost:3001`; leave `VITE_API_URL` unset locally to use this proxy. The API health check is at `/api/health`. For Cloudflare Pages, set the build variable `VITE_API_URL` to the API's HTTPS origin (for this deployment, `https://129.213.161.206`) and redeploy. A secure Pages site cannot call an HTTP API from browser code. On the API host, set `WEB_ORIGIN=https://alphatekx-ai.pages.dev` and `BETTER_AUTH_URL` to the API's HTTPS origin; CORS is credentialed and restricted to that exact frontend origin. Production auth cookies use `SameSite=None; Secure` for the cross-origin session. Keep the existing port-80 health endpoint available when adding TLS. Also set `NODE_ENV=production` and `DATABASE_URL`. Set `PGSSLMODE=require` when the database host requires TLS.
 
 ## Authentication and mail
 
