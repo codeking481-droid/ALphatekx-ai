@@ -83,12 +83,10 @@ test('provider selector requires an available provider instead of returning a fa
   assert.throws(() => selectProvider(registry), /No AI provider is configured/)
 })
 
-test('configured AI workers use the shared key and model with worker one as primary', async () => {
+test('configured AI workers call their URL directly without a key or model', async () => {
   const registry = createProviderRegistry({
     AI_PROVIDER_URL_1: 'https://worker-one.workers.dev',
-    AI_PROVIDER_URL_2: 'https://worker-two.workers.dev/v1/',
-    AI_API_KEY: 'test-only-key',
-    AI_MODEL: 'test-model',
+    AI_PROVIDER_URL_2: 'https://worker-two.workers.dev',
   })
   const workers = registry.list().filter(({ id }) => id === 'worker1' || id === 'worker2')
   assert.deepEqual(workers.map(({ id, available }) => [id, available]), [
@@ -102,25 +100,41 @@ test('configured AI workers use the shared key and model with worker one as prim
   let request
   globalThis.fetch = async (url, options) => {
     request = { url, options }
-    return new Response(JSON.stringify({
-      model: 'test-model',
-      choices: [{ message: { content: 'hello from worker' } }],
-    }))
+    return new Response(JSON.stringify({ response: 'hello from worker', model: 'worker-managed-model' }))
   }
   try {
     const result = await registry.get('worker1').generate({ messages: [{ role: 'user', content: 'hello' }] })
     assert.equal(result.text, 'hello from worker')
-    assert.equal(request.url, 'https://worker-one.workers.dev/v1/chat/completions')
-    assert.equal(request.options.headers.Authorization, 'Bearer test-only-key')
-    assert.equal(JSON.parse(request.options.body).model, 'test-model')
+    assert.equal(result.model, 'worker-managed-model')
+    assert.equal(request.url, 'https://worker-one.workers.dev/')
+    assert.equal(request.options.headers.Authorization, undefined)
+    assert.deepEqual(JSON.parse(request.options.body), { messages: [{ role: 'user', content: 'hello' }] })
   } finally {
     globalThis.fetch = originalFetch
   }
 })
 
-test('AI worker is unavailable until URL, shared API key, and model are configured', () => {
+test('AI worker availability depends only on its URL', () => {
   const registry = createProviderRegistry({ AI_PROVIDER_URL_1: 'https://worker-one.workers.dev' })
-  assert.equal(registry.list().find(({ id }) => id === 'worker1').available, false)
+  assert.equal(registry.list().find(({ id }) => id === 'worker1').available, true)
+  assert.equal(registry.list().find(({ id }) => id === 'worker2').available, false)
+})
+
+test('AI worker uses the exact configured URL and requires HTTPS', async () => {
+  const registry = createProviderRegistry({ AI_PROVIDER_URL_1: 'https://worker-one.workers.dev/custom/route' })
+  const originalFetch = globalThis.fetch
+  let requestUrl
+  globalThis.fetch = async (url) => {
+    requestUrl = url
+    return new Response(JSON.stringify({ text: 'reply' }))
+  }
+  try {
+    const result = await registry.get('worker1').generate({ messages: [] })
+    assert.equal(result.text, 'reply')
+    assert.equal(requestUrl, 'https://worker-one.workers.dev/custom/route')
+  } finally {
+    globalThis.fetch = originalFetch
+  }
 })
 
 test('provider selector requires the requested capability', () => {

@@ -3,6 +3,7 @@ import { createAnthropicProvider } from './anthropic.js'
 import { createGeminiProvider } from './gemini.js'
 import { assertProviderContract } from './interface.js'
 import { createOpenAICompatibleProvider } from './openai-compatible.js'
+import { createCloudflareWorkerProvider } from './cloudflare-worker.js'
 
 const compatibleProviders = [
   { id: 'openai', name: 'OpenAI', baseUrl: 'https://api.openai.com/v1', key: 'OPENAI_API_KEY' },
@@ -19,34 +20,30 @@ const compatibleProviders = [
   },
 ]
 
-const workerProviders = [
-  { id: 'worker1', name: 'AI Worker 1', urlEnv: 'AI_PROVIDER_URL_1' },
-  { id: 'worker2', name: 'AI Worker 2', urlEnv: 'AI_PROVIDER_URL_2' },
-]
-
 export function createProviderRegistry(env = process.env) {
   const providers = new Map()
   const metrics = new Map()
   const timeoutMs = config.aiRequestTimeoutMs
 
-  const definitions = [
-    ...compatibleProviders,
-    ...workerProviders.map((definition) => ({
-      ...definition,
-      baseUrl: workerBaseUrl(env[definition.urlEnv], definition.urlEnv),
-      key: 'AI_API_KEY',
-      modelEnv: 'AI_MODEL',
-    })),
-  ]
-
-  for (const definition of definitions) {
+  for (const definition of compatibleProviders) {
     metrics.set(definition.id, providerMetrics(definition.id, env))
     providers.set(definition.id, createOpenAICompatibleProvider({
       ...definition,
       apiKey: env[definition.key],
-      model: env[definition.modelEnv || `AI_MODEL_${definition.id.toUpperCase()}`],
+      model: env[`AI_MODEL_${definition.id.toUpperCase()}`],
       timeoutMs,
       extraHeaders: definition.headers,
+    }))
+  }
+  for (const definition of [
+    { id: 'worker1', name: 'AI Worker 1', urlEnv: 'AI_PROVIDER_URL_1' },
+    { id: 'worker2', name: 'AI Worker 2', urlEnv: 'AI_PROVIDER_URL_2' },
+  ]) {
+    metrics.set(definition.id, providerMetrics(definition.id, env))
+    providers.set(definition.id, createCloudflareWorkerProvider({
+      ...definition,
+      url: workerUrl(env[definition.urlEnv], definition.urlEnv),
+      timeoutMs,
     }))
   }
   providers.set('anthropic', createAnthropicProvider({
@@ -89,7 +86,7 @@ export function createProviderRegistry(env = process.env) {
   }
 }
 
-function workerBaseUrl(value, envName) {
+function workerUrl(value, envName) {
   if (!value?.trim()) return ''
 
   let url
@@ -99,12 +96,9 @@ function workerBaseUrl(value, envName) {
     throw new Error(`${envName} must be an absolute HTTPS URL.`)
   }
   if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash) {
-    throw new Error(`${envName} must be an HTTPS base URL without credentials, query, or fragment.`)
+    throw new Error(`${envName} must be an HTTPS URL without credentials, query, or fragment.`)
   }
-
-  const path = url.pathname.replace(/\/+$/, '')
-  url.pathname = path.toLowerCase().endsWith('/v1') ? path : `${path}/v1`
-  return url.toString().replace(/\/+$/, '')
+  return url.toString()
 }
 
 export const providerRegistry = createProviderRegistry()
