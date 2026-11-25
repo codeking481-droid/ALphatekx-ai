@@ -1,6 +1,7 @@
 import React, { useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, Navigate } from "react-router-dom";
 import { api } from "@/api/client";
+import { useAuth } from "@/lib/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -10,6 +11,7 @@ import GoogleIcon from "@/components/GoogleIcon";
 import { safeReturnTo } from "@/lib/authReturnTo";
 
 export default function Login() {
+  const { isAuthenticated } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -37,13 +39,15 @@ export default function Login() {
 
   const handleGoogle = async () => {
     try {
-      const callbackURL = new URL(returnTo, window.location.origin).toString();
+      const callbackURL = `${window.location.origin}/`;
       const result = await api.auth.signInSocial({ provider: "google", callbackURL });
       if (result.url) window.location.assign(result.url);
       else throw new Error("Google sign-in is not configured on this server.");
     }
     catch (err) { setError(err.message || 'Unable to sign in with Google'); }
   };
+
+  if (isAuthenticated) return <Navigate to="/" replace />;
 
   return (
     <AuthLayout

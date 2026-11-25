@@ -2,7 +2,7 @@ import React, { createContext, useState, useContext, useEffect, useCallback } fr
 import { api } from '@/api/client'
 import { isUiPreview } from '@/lib/ui-preview'
 
-const AuthContext = createContext();
+const AuthContext = createContext(null);
 
 export const AuthProvider = ({ children }) => {
   const uiPreview = isUiPreview();
