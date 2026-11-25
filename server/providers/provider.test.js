@@ -114,6 +114,27 @@ test('configured AI workers call their URL directly without a key or model', asy
   }
 })
 
+test('AI worker serializes an object response for structured backend prompts', async () => {
+  const provider = createProviderRegistry({
+    AI_PROVIDER_URL_1: 'https://worker-one.workers.dev',
+  }).get('worker1')
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = async () => new Response(JSON.stringify({
+    response: { goal: 'Reply conversationally', riskClassification: 'low' },
+    model: 'worker-managed-model',
+  }))
+
+  try {
+    const result = await provider.generate({ messages: [] })
+    assert.deepEqual(JSON.parse(result.text), {
+      goal: 'Reply conversationally',
+      riskClassification: 'low',
+    })
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
 test('AI worker availability depends only on its URL', () => {
   const registry = createProviderRegistry({ AI_PROVIDER_URL_1: 'https://worker-one.workers.dev' })
   assert.equal(registry.list().find(({ id }) => id === 'worker1').available, true)

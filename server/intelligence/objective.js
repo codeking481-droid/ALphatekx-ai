@@ -92,6 +92,7 @@ export function buildObjectiveMessages({ message, contextMessages = [], attachme
         'For missingInformation use objects with item, reason, requiredFor, clarificationQuestion, safeAssumption. Use an empty string when no question or safe assumption applies.',
         'For ambiguities use kind, description, clarificationQuestion, blocksDrafting, blocksExecution.',
         'For assumptions use statement, safeForDrafting, clarificationQuestion.',
+        'Set riskClassification to exactly one of: low, medium, high, critical. For a greeting or casual pleasantry with no substantive request, set the goal to replying conversationally, leave all lists empty, use low risk, and set planningRequired and requiresExternalAction to false.',
         'Set requiresExternalAction only when the user asks Biz to cause an external side effect, not when they ask for advice, a draft, or a plan.',
         `Available tools (reference only; do not invent tools): ${JSON.stringify(tools)}`,
       ].join('\n'),

@@ -48,6 +48,8 @@ export function createCloudflareWorkerProvider({ id, name, url, timeoutMs }) {
 
       const text = typeof data.response === 'string'
         ? data.response
+        : data.response && typeof data.response === 'object' && !Array.isArray(data.response)
+          ? JSON.stringify(data.response)
         : typeof data.text === 'string'
           ? data.text
           : data.choices?.[0]?.message?.content
