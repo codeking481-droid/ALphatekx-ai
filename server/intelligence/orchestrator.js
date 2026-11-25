@@ -698,7 +698,12 @@ function renderIncompleteExecution(report, planGraph, externalActionUnverified) 
     }
 
     if (task.status === 'awaiting_approval') {
-      return `- Task ${taskLabel}: awaiting approval${task.approvalId ? ` (${task.approvalId})` : ''}; no dependent tasks were run.`
+      const plannedTask = planGraph.tasks.find((item) => item.id === task.taskId)
+      const toolId = plannedTask?.requiredInputs.find((item) => item.kind === 'tool_output')?.toolId
+      const preview = toolId === 'linkedin_post' && typeof plannedTask.toolInput?.text === 'string'
+        ? `\n\nLinkedIn post preview:\n\n> ${plannedTask.toolInput.text.trim().replace(/\n/g, '\n> ')}\n\nReview and approve it in [Approvals](/approvals).`
+        : ''
+      return `- Task ${taskLabel}: awaiting approval${task.approvalId ? ` (${task.approvalId})` : ''}; no dependent tasks were run.${preview}`
     }
     if (task.status === 'executed') {
       return `- Task ${taskLabel}: a tool response was recorded, but its outcome was not verified.`

@@ -5,6 +5,7 @@ import { registerTool } from '../tools/registry.js'
 import { registerWebSearchTool } from '../tools/web-search.js'
 import { registerFileTools } from '../tools/file-tools.js'
 import { registerSkillCreateTool } from '../skills/skill-create.js'
+import { registerLinkedInTools } from '../linkedin/tools.js'
 import { processChatRequest } from './orchestrator.js'
 
 const USER_ID = 'user-1'
@@ -14,6 +15,7 @@ const PROJECT_ID = 'project-1'
 registerWebSearchTool()
 registerFileTools()
 registerSkillCreateTool()
+registerLinkedInTools()
 
 function objective(overrides = {}) {
   return {
@@ -982,6 +984,68 @@ test('approval-required tool tasks pause and do not claim the action happened', 
   }
 })
 
+test('LinkedIn post requests create an approval with the exact preview before execution', async () => {
+  const postText = 'Biz is launching: an AI that never sleeps.'
+  const database = createDatabase()
+  const { registry, calls } = createRegistry({
+    handlers: {
+      'mock-primary': {
+        understanding: () => ({
+          text: JSON.stringify(objective({
+            goal: 'Publish a LinkedIn launch post.',
+            deliverables: ['LinkedIn post published'],
+            planningRequired: false,
+            requiresExternalAction: true,
+          })),
+        }),
+        planning: () => ({
+          text: JSON.stringify({
+            tasks: [task('publish-linkedin-post', {
+              description: 'Prepare and submit the launch post for approval.',
+              type: 'tool',
+              requiredInputs: [{
+                kind: 'tool_output',
+                description: 'LinkedIn post publishing result.',
+                toolId: 'linkedin_post',
+              }],
+              expectedOutput: 'The post is published after approval.',
+              acceptanceCriteria: ['The exact post text is approved before publication.'],
+              riskClassification: 'medium',
+              requiredCapability: 'tool_execution',
+              specialistRole: 'execution',
+              toolInput: { text: postText },
+            })],
+          }),
+        }),
+      },
+    },
+  })
+
+  const result = await request({
+    database,
+    registry,
+    message: 'Make me a LinkedIn post about launching Biz.',
+    skillResolver: async () => [{
+      name: 'manage-linkedin',
+      description: 'Create and manage LinkedIn posts.',
+      version: '1.0.0',
+      body: 'Prepare LinkedIn posts and submit them for approval before publishing.',
+      tools: ['linkedin_post'],
+      enabled: true,
+    }],
+  })
+
+  assert.equal(result.execution.status, 'awaiting_approval')
+  assert.ok(calls.some(({ stage }) => stage === 'planning'))
+  assert.equal(database.state.toolExecutions[0].toolId, 'linkedin_post')
+  assert.equal(database.state.toolExecutions[0].status, 'pending_approval')
+  assert.equal(database.state.approvals[0].status, 'pending')
+  assert.match(database.state.approvals[0].description, new RegExp(postText))
+  assert.match(result.reply, /LinkedIn post preview/)
+  assert.match(result.reply, new RegExp(postText))
+  assert.match(result.reply, /Approvals/)
+})
+
 test('execution-critical missing information blocks tool dispatch before agent assignment', async () => {
   let executions = 0
   const unregister = registerMockAction('orchestrator-missing-input-test', {
@@ -1197,7 +1261,7 @@ test('failed final synthesis does not persist the plan or mark the request succe
   assert.equal(database.state.auditEvents.length, 0)
 })
 
-test('external-action requests do not claim completion without a tool execution', async () => {
+test('external-action requests without a planned tool do not claim completion', async () => {
   let toolExecutions = 0
   const unregister = registerTool({
     id: 'phase-two-test-send-message',
@@ -1230,11 +1294,14 @@ test('external-action requests do not claim completion without a tool execution'
 
     const result = await request({ database, registry, message: 'Send Alex the launch update.' })
 
-    assert.deepEqual(calls.map(({ stage }) => stage), ['understanding'])
+    assert.equal(calls[0].stage, 'understanding')
+    assert.equal(calls[1].stage, 'planning')
+    assert.equal(calls.some(({ stage }) => stage === 'synthesis'), false)
     assert.match(result.reply, /no tool was executed; i did not perform/i)
     assert.doesNotMatch(result.reply, /sent the message/i)
     assert.equal(toolExecutions, 0)
-    assert.equal(database.state.persistedTasks.length, 0)
+    assert.equal(database.state.toolExecutions.length, 0)
+    assert.ok(database.state.persistedTasks.length > 0)
   } finally {
     unregister()
   }

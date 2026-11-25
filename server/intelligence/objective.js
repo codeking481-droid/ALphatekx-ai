@@ -94,6 +94,7 @@ export function buildObjectiveMessages({ message, contextMessages = [], attachme
         'For assumptions use statement, safeForDrafting, clarificationQuestion.',
         'Set riskClassification to exactly one of: low, medium, high, critical. For a greeting or casual pleasantry with no substantive request, set the goal to replying conversationally, leave all lists empty, use low risk, and set planningRequired and requiresExternalAction to false.',
         'Set requiresExternalAction only when the user asks Biz to cause an external side effect, not when they ask for advice, a draft, or a plan.',
+        'Set planningRequired to true whenever requiresExternalAction is true so the action can be planned and paused for approval before execution.',
         `Available tools (reference only; do not invent tools): ${JSON.stringify(tools)}`,
       ].join('\n'),
     },
@@ -185,7 +186,7 @@ export function parseObjectiveSpec(text) {
   const decision = evaluateClarification(value)
   return {
     ...value,
-    planningRequired: value.planningRequired || value.deliverables.length > 1,
+    planningRequired: value.planningRequired || value.deliverables.length > 1 || value.requiresExternalAction,
     clarificationRequired: decision.clarificationRequired,
     clarificationQuestions: decision.clarificationQuestions,
     executionQuestions: decision.executionQuestions,

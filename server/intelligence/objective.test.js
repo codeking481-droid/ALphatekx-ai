@@ -56,6 +56,15 @@ test('objective validation rejects missing fields, unknown fields, and malformed
   assert.throws(() => parseObjectiveSpec(JSON.stringify(objective({ inventedFact: 'not allowed' }))), /missing or unsupported fields/)
 })
 
+test('external actions always require planning even when the model omits it', () => {
+  const parsed = parseObjectiveSpec(JSON.stringify(objective({
+    requiresExternalAction: true,
+    planningRequired: false,
+  })))
+
+  assert.equal(parsed.planningRequired, true)
+})
+
 test('drafting-critical missing information and conflicting requirements require clarification', () => {
   const missing = objective({
     missingInformation: [{
