@@ -1,0 +1,290 @@
+@import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter:wght@300;400;450;500;600&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 220 33% 97%;
+    --foreground: 220 26% 8%;
+    --card: 0 0% 100%;
+    --card-foreground: 220 26% 8%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 220 26% 8%;
+    --primary: 223 100% 52%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 220 22% 94%;
+    --secondary-foreground: 220 26% 12%;
+    --muted: 220 24% 95%;
+    --muted-foreground: 219 11% 43%;
+    --accent: 220 26% 95%;
+    --accent-foreground: 220 26% 10%;
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 220 16% 89%;
+    --input: 220 16% 87%;
+    --ring: 223 100% 52%;
+    --radius: 0.875rem;
+
+    --font-display: 'Instrument Serif', ui-serif, Georgia, serif;
+    --font-heading: 'Inter', ui-sans-serif, system-ui, sans-serif;
+    --font-body: 'Inter', ui-sans-serif, system-ui, sans-serif;
+    --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+
+    --chart-1: 223 100% 58%;
+    --chart-2: 199 78% 48%;
+    --chart-3: 262 62% 58%;
+    --chart-4: 168 55% 42%;
+    --chart-5: 32 82% 55%;
+
+    --sidebar-background: 220 30% 98%;
+    --sidebar-foreground: 220 20% 22%;
+    --sidebar-primary: 223 100% 52%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 220 22% 94%;
+    --sidebar-accent-foreground: 220 26% 10%;
+    --sidebar-border: 220 16% 90%;
+    --sidebar-ring: 223 100% 52%;
+  }
+
+  .dark {
+    --background: 220 22% 6%;
+    --foreground: 220 25% 96%;
+    --card: 222 18% 9%;
+    --card-foreground: 220 25% 96%;
+    --popover: 222 20% 8%;
+    --popover-foreground: 220 25% 96%;
+    --primary: 223 100% 58%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 222 14% 14%;
+    --secondary-foreground: 220 25% 96%;
+    --muted: 222 14% 13%;
+    --muted-foreground: 217 10% 62%;
+    --accent: 222 14% 15%;
+    --accent-foreground: 220 25% 96%;
+    --destructive: 0 68% 56%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 220 13% 16%;
+    --input: 220 13% 19%;
+    --ring: 223 100% 58%;
+
+    --chart-1: 223 100% 62%;
+    --chart-2: 199 82% 58%;
+    --chart-3: 262 70% 66%;
+    --chart-4: 168 55% 50%;
+    --chart-5: 32 85% 62%;
+
+    --sidebar-background: 220 22% 7%;
+    --sidebar-foreground: 220 20% 88%;
+    --sidebar-primary: 223 100% 58%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 222 14% 13%;
+    --sidebar-accent-foreground: 220 25% 96%;
+    --sidebar-border: 220 13% 14%;
+    --sidebar-ring: 223 100% 58%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    @apply bg-background text-foreground font-body;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+
+  ::selection {
+    background: hsl(var(--primary) / 0.24);
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: hsl(var(--foreground) / 0.12);
+    border-radius: 9999px;
+    border: 3px solid transparent;
+    background-clip: content-box;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: hsl(var(--foreground) / 0.22);
+    background-clip: content-box;
+  }
+}
+
+@layer utilities {
+  .font-display {
+    font-family: var(--font-display);
+    letter-spacing: -0.01em;
+  }
+}
+
+.welcome-avatar {
+  position: relative;
+  isolation: isolate;
+  display: grid;
+  width: 4.25rem;
+  height: 4.25rem;
+  place-items: center;
+  border: 1px solid hsl(var(--primary) / 0.1);
+  border-radius: 1.35rem;
+  background: hsl(var(--primary) / 0.035);
+}
+
+.welcome-avatar__glow {
+  position: absolute;
+  z-index: -1;
+  inset: -0.5rem;
+  border-radius: 1.75rem;
+  background: radial-gradient(circle, hsl(var(--primary) / 0.24), transparent 68%);
+  filter: blur(7px);
+  animation: welcome-glow 3.2s ease-in-out infinite;
+}
+
+.welcome-avatar__core {
+  position: relative;
+  z-index: 2;
+  display: grid;
+  width: 2.55rem;
+  height: 2.55rem;
+  place-items: center;
+  border: 1px solid rgb(255 255 255 / 0.35);
+  border-radius: 0.9rem;
+  background: linear-gradient(145deg, #7ab8ff 0%, #3569ed 56%, #4c41cb 100%);
+  box-shadow: 0 5px 16px hsl(var(--primary) / 0.32), inset 0 1px 0 rgb(255 255 255 / 0.45);
+  animation: welcome-float 3.4s ease-in-out infinite;
+}
+
+.welcome-avatar__core::before {
+  position: absolute;
+  inset: 3px;
+  border: 1px solid rgb(255 255 255 / 0.2);
+  border-radius: 0.68rem;
+  content: "";
+}
+
+.welcome-avatar__core svg {
+  position: relative;
+  filter: drop-shadow(0 1px 2px rgb(25 46 106 / 0.45));
+}
+
+.welcome-avatar__orbit {
+  position: absolute;
+  z-index: 1;
+  display: block;
+  border: 1px solid hsl(var(--primary) / 0.25);
+  border-radius: 50%;
+}
+
+.welcome-avatar__orbit--outer {
+  width: 4.75rem;
+  height: 2rem;
+  animation: welcome-orbit 8s linear infinite;
+}
+
+.welcome-avatar__orbit--inner {
+  width: 4rem;
+  height: 2.7rem;
+  border-color: hsl(263 78% 68% / 0.2);
+  animation: welcome-orbit 11s linear infinite reverse;
+}
+
+.welcome-avatar__orbit i {
+  position: absolute;
+  top: 50%;
+  right: -0.2rem;
+  display: block;
+  width: 0.4rem;
+  height: 0.4rem;
+  border: 1px solid rgb(255 255 255 / 0.7);
+  border-radius: 50%;
+  background: #8bc8ff;
+  box-shadow: 0 0 9px hsl(var(--primary) / 0.8);
+  transform: translateY(-50%);
+}
+
+.welcome-avatar__orbit--inner i {
+  right: auto;
+  left: -0.18rem;
+  width: 0.3rem;
+  height: 0.3rem;
+  background: #b7a3ff;
+  box-shadow: 0 0 8px hsl(263 78% 68% / 0.8);
+}
+
+.welcome-avatar__spark {
+  position: absolute;
+  z-index: 3;
+  width: 0.22rem;
+  height: 0.22rem;
+  border-radius: 50%;
+  background: #b9ddff;
+  box-shadow: 0 0 8px rgb(157 207 255 / 0.9);
+  animation: welcome-twinkle 2s ease-in-out infinite;
+}
+
+.welcome-avatar__spark--one {
+  top: 0.35rem;
+  right: 0.45rem;
+}
+
+.welcome-avatar__spark--two {
+  bottom: 0.45rem;
+  left: 0.35rem;
+  width: 0.15rem;
+  height: 0.15rem;
+  animation-delay: 0.8s;
+}
+
+@keyframes welcome-orbit {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes welcome-float {
+  50% {
+    transform: translateY(-3px) rotate(2deg);
+  }
+}
+
+@keyframes welcome-glow {
+  50% {
+    opacity: 0.58;
+    transform: scale(1.12);
+  }
+}
+
+@keyframes welcome-twinkle {
+  50% {
+    opacity: 0.35;
+    transform: scale(0.65);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .welcome-avatar__glow,
+  .welcome-avatar__core,
+  .welcome-avatar__orbit,
+  .welcome-avatar__spark {
+    animation: none;
+  }
+}

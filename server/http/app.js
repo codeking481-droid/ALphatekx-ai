@@ -1,0 +1,737 @@
+import express from 'express'
+import multer from 'multer'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { fromNodeHeaders, toNodeHandler } from 'better-auth/node'
+import { auth } from '../auth/auth.js'
+import { requireUser } from '../auth/session.js'
+import { pool } from '../db/pool.js'
+import { config } from '../config.js'
+import { providerRegistry } from '../providers/registry.js'
+import { deleteConversation, getConversation, getMessages, listConversations } from '../conversations/repository.js'
+import { getOwnedFile, MAX_FILE_BYTES, saveUpload } from '../files/service.js'
+import { cancelOwnedJob, getOwnedJob, submitChatJob } from '../jobs/service.js'
+import { createMemory, deleteAllMemories, deleteMemory, listMemories, updateMemory } from '../memory/service.js'
+import {
+  createProject,
+  createProjectTask,
+  deleteProject,
+  findProjectByName,
+  findProjectMention,
+  getProjectDetails,
+  listProjects,
+  parseCreateProjectRequest,
+} from '../projects/service.js'
+import { audit } from '../observability/audit.js'
+import { log } from '../observability/logger.js'
+import { requestContext } from '../observability/request-context.js'
+import { decideApproval } from '../tools/executor.js'
+import { parseApprovalDescription } from '../tools/registry.js'
+import { registerWebSearchTool } from '../tools/web-search.js'
+import { registerFileTools } from '../tools/file-tools.js'
+import { registerSkillCreateTool } from '../skills/skill-create.js'
+import { extractSkillMarkdown } from '../skills/archive.js'
+import {
+  decideSkillApproval,
+  installSkill,
+  listSkillApprovals,
+  listSkills,
+  removeSkill,
+  setSkillEnabled,
+} from '../skills/service.js'
+import { listToolPermissionGrants, revokeToolPermissionGrant } from '../tools/permissions.js'
+import { createRateLimiter } from './rate-limit.js'
+
+const app = express()
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_FILE_BYTES, files: 1 } })
+const skillUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 64 * 1024, files: 1 } })
+const frontendDirectory = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../dist')
+const chatRateLimit = createRateLimiter({ limit: 10, windowMs: 60_000 })
+registerWebSearchTool()
+registerFileTools()
+registerSkillCreateTool()
+
+app.disable('x-powered-by')
+app.use(requestContext)
+app.all('/api/auth/*', toNodeHandler(auth))
+app.use(express.json({ limit: '1mb' }))
+app.use((req, res, next) => {
+  const origin = req.get('origin')
+  if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method) && origin && origin !== config.webOrigin) {
+    return res.status(403).json({ error: 'Request origin is not allowed.' })
+  }
+  next()
+})
+
+app.get('/api/health', async (_req, res, next) => {
+  try {
+    await pool.query('SELECT 1')
+    res.json({ status: 'ok', database: 'ok' })
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.get('/api/me', requireUser, (req, res) => {
+  res.json({ ...req.user, full_name: req.user.name })
+})
+
+app.patch('/api/profile', requireUser, requireObjectBody, async (req, res, next) => {
+  try {
+    const fullName = typeof req.body.full_name === 'string' ? req.body.full_name.trim() : ''
+    if (!fullName || fullName.length > 120) return res.status(400).json({ error: 'Name must be between 1 and 120 characters.' })
+    const updated = await auth.api.updateUser({ headers: fromNodeHeaders(req.headers), body: { name: fullName } })
+    res.json({ ...updated, full_name: updated.name })
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.get('/api/providers', requireUser, (_req, res) => {
+  res.json({ providers: providerRegistry.list() })
+})
+
+app.get('/api/providers/:providerId/models', requireUser, async (req, res, next) => {
+  try {
+    const models = await providerRegistry.discoverModels(req.params.providerId)
+    const provider = providerRegistry.get(req.params.providerId)
+    for (const model of models) {
+      await pool.query(
+        `INSERT INTO models (id, provider_id, capabilities)
+         VALUES ($1, $2, $3::jsonb)
+         ON CONFLICT (provider_id, id) DO UPDATE SET capabilities = EXCLUDED.capabilities, discovered_at = now()`,
+        [model, provider.id, JSON.stringify(provider.capabilities)],
+      )
+    }
+    res.json({ models })
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.get('/api/conversations', requireUser, async (req, res, next) => {
+  try {
+    res.json(await listConversations({
+      userId: req.user.id,
+      search: typeof req.query.search === 'string' ? req.query.search.slice(0, 100) : '',
+      cursor: decodeCursor(req.query.cursor),
+      limit: req.query.limit,
+    }))
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.get('/api/conversations/:conversationId', requireUser, async (req, res, next) => {
+  try {
+    if (!isUuid(req.params.conversationId)) return res.status(400).json({ error: 'The conversation ID is invalid.' })
+    const conversation = await getConversation({ userId: req.user.id, conversationId: req.params.conversationId })
+    if (!conversation) return res.status(404).json({ error: 'Conversation not found.' })
+    res.json(conversation)
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.get('/api/conversations/:conversationId/messages', requireUser, async (req, res, next) => {
+  try {
+    if (!isUuid(req.params.conversationId)) return res.status(400).json({ error: 'The conversation ID is invalid.' })
+    const conversation = await getConversation({ userId: req.user.id, conversationId: req.params.conversationId })
+    if (!conversation) return res.status(404).json({ error: 'Conversation not found.' })
+    res.json({ items: await getMessages({ userId: req.user.id, conversationId: req.params.conversationId, limit: req.query.limit }) })
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.delete('/api/conversations/:conversationId', requireUser, async (req, res, next) => {
+  try {
+    if (!isUuid(req.params.conversationId)) return res.status(400).json({ error: 'The conversation ID is invalid.' })
+    const deleted = await deleteConversation({ userId: req.user.id, conversationId: req.params.conversationId })
+    if (!deleted) return res.status(404).json({ error: 'Conversation not found.' })
+    await audit({ userId: req.user.id, event: 'conversation.deleted', resourceType: 'conversation', resourceId: req.params.conversationId })
+    res.status(204).end()
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.post('/api/files', requireUser, upload.single('file'), async (req, res, next) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'A file is required.' })
+    res.status(201).json(await saveUpload({ userId: req.user.id, file: req.file }))
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.get('/api/files/:fileId', requireUser, async (req, res, next) => {
+  try {
+    if (!isUuid(req.params.fileId)) return res.status(400).json({ error: 'The file ID is invalid.' })
+    const file = await getOwnedFile({ userId: req.user.id, fileId: req.params.fileId })
+    if (!file) return res.status(404).json({ error: 'File not found.' })
+    res.set({
+      'Content-Type': file.mime_type,
+      'Content-Length': file.size_bytes,
+      'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(file.original_name)}`,
+      'X-Content-Type-Options': 'nosniff',
+      'Cache-Control': 'private, no-store',
+    })
+    file.stream.on('error', next)
+    file.stream.pipe(res)
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.post('/api/chat', requireUser, chatRateLimit, requireObjectBody, async (req, res, next) => {
+  try {
+    const message = typeof req.body.message === 'string' ? req.body.message.trim().slice(0, 8000) : ''
+    let projectId = req.body.project_id ?? null
+    const conversationId = req.body.conversation_id ?? null
+    if (projectId !== null && !isUuid(projectId)) {
+      return res.status(400).json({ error: 'The project ID is invalid.' })
+    }
+    if (conversationId !== null && !isUuid(conversationId)) {
+      return res.status(400).json({ error: 'The conversation ID is invalid.' })
+    }
+    if (conversationId) {
+      const { rows } = await pool.query(
+        'SELECT project_id FROM conversations WHERE id = $1 AND user_id = $2',
+        [conversationId, req.user.id],
+      )
+      if (!rows[0]) return res.status(404).json({ error: 'Conversation not found.' })
+      if (projectId && rows[0].project_id && projectId !== rows[0].project_id) {
+        return res.status(409).json({ error: 'Conversation belongs to a different project.' })
+      }
+      projectId = projectId || rows[0].project_id
+    }
+    if (projectId) {
+      const { rowCount } = await pool.query(
+        'SELECT id FROM projects WHERE id = $1 AND user_id = $2',
+        [projectId, req.user.id],
+      )
+      if (!rowCount) return res.status(404).json({ error: 'Project not found.' })
+    }
+    if (!conversationId && !projectId) {
+      const requestedProjectName = parseCreateProjectRequest(message)
+      if (requestedProjectName) {
+        const existing = await findProjectByName({ userId: req.user.id, name: requestedProjectName })
+        const project = existing || await createProject({ userId: req.user.id, name: requestedProjectName })
+        projectId = project.id
+      } else {
+        const mentionedProject = await findProjectMention({ userId: req.user.id, message })
+        projectId = mentionedProject?.id || null
+      }
+    }
+    const attachments = Array.isArray(req.body.attachments)
+      ? req.body.attachments.slice(0, 5).filter((file) => file && typeof file.name === 'string' && typeof file.url === 'string')
+      : []
+    if (!message && !attachments.length) return res.status(400).json({ error: 'A message or attachment is required.' })
+    const job = await submitChatJob({
+      userId: req.user.id,
+      conversationId,
+      projectId,
+      message,
+      attachments,
+      requestId: req.requestId,
+    })
+    res.status(202).json({ job_id: job.id, status: job.status, progress: job.progress })
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.get('/api/jobs/:jobId', requireUser, async (req, res, next) => {
+  try {
+    if (!isUuid(req.params.jobId)) return res.status(400).json({ error: 'The job ID is invalid.' })
+    const job = await getOwnedJob({ userId: req.user.id, jobId: req.params.jobId })
+    if (!job) return res.status(404).json({ error: 'Job not found.' })
+    res.json(job)
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.post('/api/jobs/:jobId/cancel', requireUser, async (req, res, next) => {
+  try {
+    if (!isUuid(req.params.jobId)) return res.status(400).json({ error: 'The job ID is invalid.' })
+    const cancelled = await cancelOwnedJob({ userId: req.user.id, jobId: req.params.jobId })
+    if (!cancelled) return res.status(404).json({ error: 'Job not found.' })
+    const job = await getOwnedJob({ userId: req.user.id, jobId: req.params.jobId })
+    res.status(job.status === 'running' ? 202 : 200).json(job)
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.get('/api/memories', requireUser, async (req, res, next) => {
+  try {
+    res.json({ items: await listMemories(req.user.id) })
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.post('/api/memories', requireUser, requireObjectBody, async (req, res, next) => {
+  try {
+    if (typeof req.body.source !== 'string' || !req.body.source.trim()) return res.status(400).json({ error: 'A memory source is required.' })
+    const projectId = req.body.project_id ?? null
+    if (projectId !== null && !isUuid(projectId)) return res.status(400).json({ error: 'The project ID is invalid.' })
+    res.status(201).json(await createMemory({
+      userId: req.user.id, kind: req.body.kind ?? req.body.type, content: req.body.content,
+      source: req.body.source.trim(), projectId,
+    }))
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.delete('/api/memories/:memoryId', requireUser, async (req, res, next) => {
+  try {
+    if (!isUuid(req.params.memoryId)) return res.status(400).json({ error: 'The memory ID is invalid.' })
+    if (!await deleteMemory(req.user.id, req.params.memoryId)) return res.status(404).json({ error: 'Memory not found.' })
+    res.status(204).end()
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.patch('/api/memories/:memoryId', requireUser, requireObjectBody, async (req, res, next) => {
+  try {
+    if (!isUuid(req.params.memoryId)) return res.status(400).json({ error: 'The memory ID is invalid.' })
+    const projectId = req.body.project_id === undefined
+      ? undefined
+      : req.body.project_id === null ? null : req.body.project_id
+    if (projectId !== undefined && projectId !== null && !isUuid(projectId)) {
+      return res.status(400).json({ error: 'The project ID is invalid.' })
+    }
+    const memory = await updateMemory({
+      userId: req.user.id,
+      memoryId: req.params.memoryId,
+      kind: req.body.kind ?? req.body.type,
+      content: req.body.content,
+      projectId,
+    })
+    if (!memory) return res.status(404).json({ error: 'Memory not found.' })
+    res.json(memory)
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.delete('/api/memories', requireUser, async (req, res, next) => {
+  try {
+    const deleted = await deleteAllMemories(req.user.id)
+    res.json({ deleted })
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.get('/api/projects', requireUser, async (req, res, next) => {
+  try {
+    res.json({ items: await listProjects(req.user.id) })
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.get('/api/projects/:projectId', requireUser, async (req, res, next) => {
+  try {
+    if (!isUuid(req.params.projectId)) return res.status(400).json({ error: 'The project ID is invalid.' })
+    const project = await getProjectDetails({ userId: req.user.id, projectId: req.params.projectId })
+    if (!project) return res.status(404).json({ error: 'Project not found.' })
+    res.json(project)
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.delete('/api/projects/:projectId', requireUser, async (req, res, next) => {
+  try {
+    if (!isUuid(req.params.projectId)) return res.status(400).json({ error: 'The project ID is invalid.' })
+    if (!await deleteProject({ userId: req.user.id, projectId: req.params.projectId })) {
+      return res.status(404).json({ error: 'Project not found.' })
+    }
+    res.status(204).end()
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.get('/api/tasks', requireUser, async (req, res, next) => {
+  try {
+    const projectId = typeof req.query.project_id === 'string' ? req.query.project_id : null
+    if (projectId !== null && !isUuid(projectId)) return res.status(400).json({ error: 'The project ID is invalid.' })
+    if (req.query.project_id !== undefined && projectId === null) return res.status(400).json({ error: 'The project ID is invalid.' })
+    const { rows } = await pool.query(
+      `SELECT id, project_id, title, description, status, dependencies, position, created_at, updated_at
+       FROM tasks WHERE user_id = $1 AND ($2::uuid IS NULL OR project_id = $2)
+       ORDER BY position, created_at`,
+      [req.user.id, projectId],
+    )
+    res.json({ items: rows })
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.patch('/api/tasks/:taskId', requireUser, requireObjectBody, async (req, res, next) => {
+  try {
+    if (!isUuid(req.params.taskId)) return res.status(400).json({ error: 'The task ID is invalid.' })
+    const status = req.body.status
+    if (!['pending', 'completed', 'cancelled'].includes(status)) return res.status(400).json({ error: 'Unsupported task status.' })
+    const client = await pool.connect()
+    try {
+      await client.query('BEGIN')
+      const task = await client.query('SELECT id, dependencies FROM tasks WHERE id = $1 AND user_id = $2 FOR UPDATE', [req.params.taskId, req.user.id])
+      if (!task.rowCount) {
+        await client.query('ROLLBACK')
+        return res.status(404).json({ error: 'Task not found.' })
+      }
+      if (status === 'completed' && task.rows[0].dependencies.length) {
+        const dependencies = await client.query(
+          `SELECT count(*)::int AS total FROM tasks
+           WHERE user_id = $1 AND id = ANY($2::uuid[]) AND status = 'completed'`,
+          [req.user.id, task.rows[0].dependencies],
+        )
+        if (dependencies.rows[0].total !== task.rows[0].dependencies.length) {
+          await client.query('ROLLBACK')
+          return res.status(409).json({ error: 'Complete task dependencies before completing this task.' })
+        }
+      }
+      const updated = await client.query(
+        'UPDATE tasks SET status = $2, updated_at = now() WHERE id = $1 RETURNING id, project_id, title, description, status, dependencies, position, updated_at',
+        [req.params.taskId, status],
+      )
+      await client.query('COMMIT')
+      res.json(updated.rows[0])
+    } catch (error) {
+      await client.query('ROLLBACK')
+      throw error
+    } finally {
+      client.release()
+    }
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.get('/api/settings', requireUser, async (req, res, next) => {
+  try {
+    const { rows } = await pool.query('SELECT preferences FROM user_settings WHERE user_id = $1', [req.user.id])
+    res.json({ preferences: rows[0]?.preferences || {} })
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.patch('/api/settings', requireUser, requireObjectBody, async (req, res, next) => {
+  try {
+    const { theme } = req.body
+    if (theme !== undefined && !['dark', 'light', 'system'].includes(theme)) {
+      return res.status(400).json({ error: 'Theme must be dark, light, or system.' })
+    }
+    const { rows } = await pool.query(
+      `INSERT INTO user_settings (user_id, preferences)
+       VALUES ($1, $2::jsonb)
+       ON CONFLICT (user_id) DO UPDATE SET preferences = user_settings.preferences || EXCLUDED.preferences, updated_at = now()
+       RETURNING preferences`,
+      [req.user.id, JSON.stringify({ ...(theme ? { theme } : {}) })],
+    )
+    res.json({ preferences: rows[0].preferences })
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.post('/api/projects', requireUser, requireObjectBody, async (req, res, next) => {
+  try {
+    const name = typeof req.body.name === 'string' ? req.body.name.trim() : ''
+    if (!name || name.length > 160) return res.status(400).json({ error: 'Project name must be between 1 and 160 characters.' })
+    const description = req.body.description ?? ''
+    if (typeof description !== 'string' || description.length > 8000) {
+      return res.status(400).json({ error: 'Project description must be a string of up to 8000 characters.' })
+    }
+    res.status(201).json(await createProject({ userId: req.user.id, name, description }))
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.post('/api/tasks', requireUser, requireObjectBody, async (req, res, next) => {
+  try {
+    const title = typeof req.body.title === 'string' ? req.body.title.trim() : ''
+    if (!title || title.length > 240) return res.status(400).json({ error: 'Task title must be between 1 and 240 characters.' })
+    const projectId = req.body.project_id ?? null
+    if (projectId !== null && !isUuid(projectId)) return res.status(400).json({ error: 'The project ID is invalid.' })
+    if (req.body.dependencies !== undefined && !Array.isArray(req.body.dependencies)) {
+      return res.status(400).json({ error: 'Task dependencies are invalid.' })
+    }
+    const dependencies = req.body.dependencies || []
+    if (dependencies.length > 50 || dependencies.some((id) => !isUuid(id))) return res.status(400).json({ error: 'Task dependencies are invalid.' })
+    if (req.body.description !== undefined && typeof req.body.description !== 'string') {
+      return res.status(400).json({ error: 'Task description must be a string.' })
+    }
+    res.status(201).json(await createProjectTask({
+      userId: req.user.id, projectId, title,
+      description: typeof req.body.description === 'string' ? req.body.description.slice(0, 8000) : '',
+      dependencies,
+    }))
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.get('/api/approvals', requireUser, async (req, res, next) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT a.id, a.tool_execution_id, a.description, a.expires_at, a.created_at,
+              e.tool_id, e.input AS tool_input, j.id AS job_id, j.conversation_id
+       FROM approval_requests a
+       JOIN tool_executions e ON e.id = a.tool_execution_id
+       LEFT JOIN jobs j ON j.agent_run_id = e.agent_run_id AND j.approval_id = a.id
+       WHERE a.user_id = $1 AND a.status = 'pending' AND a.expires_at > now()
+       ORDER BY a.created_at`,
+      [req.user.id],
+    )
+    res.json({
+      items: rows.map(({ tool_input, ...row }) => ({
+        ...row,
+        description: parseApprovalDescription(row.description)?.description || 'This approval record is stale and requires review.',
+        ...(row.tool_id === 'file_write' ? { input: parseStoredObject(tool_input) } : {}),
+      })),
+    })
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.get('/api/tool-permissions', requireUser, async (req, res, next) => {
+  try {
+    res.json({ items: await listToolPermissionGrants({ userId: req.user.id }) })
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.delete('/api/tool-permissions/:toolId', requireUser, async (req, res, next) => {
+  try {
+    if (!/^[a-z0-9][a-z0-9._-]{0,63}$/i.test(req.params.toolId)) {
+      return res.status(400).json({ error: 'The tool ID is invalid.' })
+    }
+    const revoked = await revokeToolPermissionGrant({ userId: req.user.id, toolId: req.params.toolId })
+    if (!revoked) return res.status(404).json({ error: 'Tool permission grant not found.' })
+    res.status(204).end()
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.get('/api/skills', requireUser, async (req, res, next) => {
+  try {
+    res.json({ items: await listSkills({ userId: req.user.id, database: pool }) })
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.post('/api/skills/install', requireUser, skillUpload.single('skill'), async (req, res, next) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'Upload a SKILL.md file or a ZIP containing one.' })
+    const markdown = extractSkillMarkdown(req.file)
+    const result = await installSkill({ userId: req.user.id, markdown, database: pool })
+    res.status(result.status === 'pending_approval' ? 202 : result.status === 'installed' ? 201 : 200).json(result)
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.patch('/api/skills/:name', requireUser, requireObjectBody, async (req, res, next) => {
+  try {
+    const result = await setSkillEnabled({
+      userId: req.user.id,
+      name: req.params.name,
+      enabled: req.body.enabled,
+      database: pool,
+    })
+    res.status(result.status === 'pending_approval' ? 202 : 200).json(result)
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.delete('/api/skills/:name', requireUser, async (req, res, next) => {
+  try {
+    await removeSkill({ userId: req.user.id, name: req.params.name, database: pool })
+    res.status(204).end()
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.get('/api/skills/approvals', requireUser, async (req, res, next) => {
+  try {
+    res.json({ items: await listSkillApprovals({ userId: req.user.id, database: pool }) })
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.post('/api/skills/approvals/:approvalId', requireUser, requireObjectBody, async (req, res, next) => {
+  try {
+    if (!isUuid(req.params.approvalId)) return res.status(400).json({ error: 'The skill approval ID is invalid.' })
+    if (!['approved', 'denied'].includes(req.body.decision)) {
+      return res.status(400).json({ error: 'Decision must be approved or denied.' })
+    }
+    res.json(await decideSkillApproval({
+      userId: req.user.id,
+      approvalId: req.params.approvalId,
+      decision: req.body.decision,
+      database: pool,
+    }))
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.post('/api/approvals/:approvalId', requireUser, requireObjectBody, async (req, res, next) => {
+  try {
+    if (!isUuid(req.params.approvalId)) return res.status(400).json({ error: 'The approval ID is invalid.' })
+    if (!['approved', 'denied'].includes(req.body.decision)) return res.status(400).json({ error: 'Approval decision must be approved or denied.' })
+    if (req.body.remember_for_workspace !== undefined && typeof req.body.remember_for_workspace !== 'boolean') {
+      return res.status(400).json({ error: 'remember_for_workspace must be a boolean.' })
+    }
+    const approvalResult = await decideApproval({
+      userId: req.user.id,
+      approvalId: req.params.approvalId,
+      decision: req.body.decision,
+      requestId: req.requestId,
+      deferExecution: true,
+      rememberForWorkspace: req.body.remember_for_workspace === true,
+    })
+    const execution = await pool.query(
+      `SELECT e.agent_run_id, r.input->'continuation' AS continuation
+       FROM approval_requests a
+       JOIN tool_executions e ON e.id = a.tool_execution_id
+       JOIN agent_runs r ON r.id = e.agent_run_id AND r.user_id = a.user_id
+       WHERE a.id = $1 AND a.user_id = $2`,
+      [req.params.approvalId, req.user.id],
+    )
+    const stored = execution.rows[0]
+    if (!stored) return res.status(404).json({ error: 'Approval request not found.' })
+
+    let job = await pool.query(
+      `UPDATE jobs SET status = 'queued', agent_run_id = $2, approval_id = $3,
+           progress = '{"stage":"queued","message":"Approval recorded; waiting for a worker."}'::jsonb,
+           lease_owner = NULL, lease_expires_at = NULL, heartbeat_at = NULL,
+           completed_at = NULL, updated_at = now()
+       WHERE user_id = $1 AND agent_run_id = $2 AND status = 'waiting_approval'
+       RETURNING id, status, conversation_id`,
+      [req.user.id, stored.agent_run_id, req.params.approvalId],
+    )
+    let queuedJob = job.rows[0]
+    if (!queuedJob) {
+      const existing = await pool.query(
+        `SELECT id, status, conversation_id FROM jobs
+         WHERE user_id = $1 AND approval_id = $2 ORDER BY created_at DESC LIMIT 1`,
+        [req.user.id, req.params.approvalId],
+      )
+      queuedJob = existing.rows[0]
+    }
+    if (!queuedJob) {
+      if (approvalResult.status === 'completed') {
+        return res.json({ approval: approvalResult, job_id: null, status: 'completed' })
+      }
+      const continuation = stored.continuation
+      if (!continuation || typeof continuation.conversationId !== 'string' || typeof continuation.request !== 'string') {
+        return res.status(409).json({ error: 'This approval has no recoverable job continuation.' })
+      }
+      const created = await pool.query(
+        `INSERT INTO jobs (user_id, status, input, conversation_id, agent_run_id, approval_id, progress)
+         VALUES ($1, 'queued', $2::jsonb, $3, $4, $5,
+           '{"stage":"queued","message":"Approval recorded; waiting for a worker."}'::jsonb)
+         RETURNING id, status, conversation_id`,
+        [
+          req.user.id,
+          JSON.stringify({
+            message: continuation.request,
+            conversation_id: continuation.conversationId,
+            project_id: continuation.projectId || null,
+            attachments: [],
+            request_id: req.requestId,
+          }),
+          continuation.conversationId,
+          stored.agent_run_id,
+          req.params.approvalId,
+        ],
+      )
+      queuedJob = created.rows[0]
+    }
+    res.status(202).json({ approval: approvalResult, job_id: queuedJob.id, status: queuedJob.status, conversation_id: queuedJob.conversation_id })
+  } catch (error) {
+    next(error)
+  }
+})
+
+if (config.isProduction) {
+  app.use(express.static(frontendDirectory, { index: false }))
+  app.get('*', (_req, res) => res.sendFile(path.join(frontendDirectory, 'index.html')))
+}
+
+app.use((error, _req, res, _next) => {
+  if (error instanceof multer.MulterError) {
+    const fileLimit = _req.path.startsWith('/api/skills') ? '64 KiB' : `${MAX_FILE_BYTES / (1024 * 1024)} MB`
+    return res.status(error.code === 'LIMIT_FILE_SIZE' ? 413 : 400).json({
+      error: error.code === 'LIMIT_FILE_SIZE' ? `Files must be ${fileLimit} or smaller.` : 'The upload was invalid.',
+      requestId: _req.requestId,
+    })
+  }
+  const status = Number(error.status) >= 400 && Number(error.status) < 500 ? Number(error.status) : 500
+  if (status >= 500) {
+    log('error', 'api.request.failed', {
+      requestId: _req.requestId,
+      error: {
+        name: error.name || 'Error',
+        code: error.code || null,
+        provider: error.provider || null,
+        upstreamStatus: error.upstreamStatus || null,
+        message: error.message || 'Unknown error',
+      },
+    })
+  }
+  res.status(status).json({
+    error: status < 500 ? error.message : 'The server could not complete the request.',
+    requestId: _req.requestId,
+  })
+})
+
+function decodeCursor(value) {
+  if (typeof value !== 'string' || value.length > 512) return null
+  try {
+    const cursor = JSON.parse(Buffer.from(value, 'base64url').toString('utf8'))
+    if (typeof cursor.updatedAt === 'string' && typeof cursor.id === 'string') return cursor
+  } catch {
+    return null
+  }
+  return null
+}
+
+function isUuid(value) {
+  return typeof value === 'string' && /^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i.test(value)
+}
+
+function requireObjectBody(req, res, next) {
+  if (!req.body || typeof req.body !== 'object' || Array.isArray(req.body)) {
+    return res.status(400).json({ error: 'A JSON request body is required.', requestId: req.requestId })
+  }
+  next()
+}
+
+function parseStoredObject(value) {
+  const parsed = typeof value === 'string' ? JSON.parse(value) : value
+  return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null
+}
+
+export default app
