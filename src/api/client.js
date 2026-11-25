@@ -24,7 +24,12 @@ async function request(path, options = {}) {
 export const api = {
   request,
   auth: {
-    me: () => request('/api/me'),
+    getSession: () => request('/api/auth/get-session', { credentials: 'include' }),
+    me: async () => {
+      const session = await request('/api/auth/get-session', { credentials: 'include' })
+      if (!session?.user) throw Object.assign(new Error('Authentication required'), { status: 401 })
+      return { ...session.user, full_name: session.user.name }
+    },
     signIn: ({ email, password }) => request('/api/auth/sign-in/email', { method: 'POST', body: { email, password } }),
     signUp: ({ name, email, password }) => request('/api/auth/sign-up/email', { method: 'POST', body: { name, email, password } }),
     signOut: () => request('/api/auth/sign-out', { method: 'POST', body: {} }),

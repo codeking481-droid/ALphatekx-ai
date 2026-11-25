@@ -15,9 +15,10 @@ export const AuthProvider = ({ children }) => {
   const checkUserAuth = useCallback(async () => {
     setIsLoadingAuth(true)
     try {
-      const currentUser = await api.auth.me()
-      setUser(currentUser)
-      setIsAuthenticated(true)
+      const session = await api.auth.getSession()
+      const currentUser = session?.user
+      setUser(currentUser ? { ...currentUser, full_name: currentUser.name } : null)
+      setIsAuthenticated(Boolean(currentUser))
       setAuthError(null)
     } catch (error) {
       setUser(null)
