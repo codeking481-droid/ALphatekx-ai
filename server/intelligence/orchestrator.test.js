@@ -802,26 +802,6 @@ test('invalid PlanGraphs are rejected before agent assignment and persistence', 
       error: /dependency cycle/,
     },
     {
-      name: 'invalid input',
-      graph: { tasks: [task('bad', { requiredInputs: [{ kind: 'unknown', description: 'Bad input.' }] })] },
-      error: /invalid input kind/,
-    },
-    {
-      name: 'missing acceptance criteria',
-      graph: { tasks: [task('bad', { acceptanceCriteria: [] })] },
-      error: /acceptanceCriteria/,
-    },
-    {
-      name: 'invalid task type',
-      graph: { tasks: [task('bad', { type: 'unknown' })] },
-      error: /invalid task type/,
-    },
-    {
-      name: 'missing dependency',
-      graph: { tasks: [task('bad', { dependencies: ['missing-task'] })] },
-      error: /references missing dependency/,
-    },
-    {
       name: 'nonexistent tool',
       graph: {
         tasks: [task('bad', {
@@ -859,7 +839,8 @@ test('invalid PlanGraphs are rejected before agent assignment and persistence', 
         scenario.error,
       )
 
-      assert.deepEqual(calls.map(({ stage }) => stage), ['understanding', 'planning'])
+      assert.equal(calls[0].stage, 'understanding')
+      assert.equal(calls.filter(({ stage }) => stage === 'planning').length, 2)
       assert.equal(database.state.agentRuns.length, 0)
       assert.equal(database.state.commits, 0)
       assert.equal(database.state.persistedTasks.length, 0)
@@ -1044,6 +1025,66 @@ test('LinkedIn post requests create an approval with the exact preview before ex
   assert.match(result.reply, /LinkedIn post preview/)
   assert.match(result.reply, new RegExp(postText))
   assert.match(result.reply, /Approvals/)
+})
+
+test('LinkedIn post plans with malformed acceptance criteria still reach approval', async () => {
+  const cases = [
+    { name: 'string', value: 'Draft ready', expected: ['Draft ready'] },
+    { name: 'missing', expected: ['Draft LinkedIn post created for approval'] },
+    { name: 'empty', value: [], expected: ['Draft LinkedIn post created for approval'] },
+    { name: 'null', value: null, expected: ['Draft LinkedIn post created for approval'] },
+  ]
+
+  for (const scenario of cases) {
+    const database = createDatabase()
+    const publishTask = task('publish-linkedin-post', {
+      type: 'tool',
+      requiredInputs: [{
+        kind: 'tool_output',
+        description: 'LinkedIn post publishing result.',
+        toolId: 'linkedin_post',
+      }],
+      requiredCapability: 'tool_execution',
+      specialistRole: 'execution',
+      toolInput: { text: 'Biz is launching: an AI that never sleeps.' },
+    })
+    if (Object.hasOwn(scenario, 'value')) publishTask.acceptanceCriteria = scenario.value
+    else delete publishTask.acceptanceCriteria
+
+    const { registry } = createRegistry({
+      handlers: {
+        'mock-primary': {
+          understanding: () => ({
+            text: JSON.stringify(objective({
+              goal: 'Publish a LinkedIn launch post.',
+              deliverables: ['LinkedIn post published'],
+              requiresExternalAction: true,
+            })),
+          }),
+          planning: () => ({ text: JSON.stringify({ tasks: [publishTask] }) }),
+        },
+      },
+    })
+    const result = await request({
+      database,
+      registry,
+      message: 'Make me a LinkedIn post about launching Biz.',
+      skillResolver: async () => [{
+        name: 'manage-linkedin',
+        description: 'Create and manage LinkedIn posts.',
+        version: '1.0.0',
+        body: 'Prepare LinkedIn posts and submit them for approval before publishing.',
+        tools: ['linkedin_post'],
+        enabled: true,
+      }],
+    })
+
+    assert.equal(result.execution.status, 'awaiting_approval', scenario.name)
+    assert.deepEqual(database.state.agentRuns[0].input.task.acceptanceCriteria, scenario.expected)
+    assert.equal(database.state.toolExecutions[0].status, 'pending_approval')
+    assert.equal(database.state.approvals[0].status, 'pending')
+    assert.match(result.reply, /LinkedIn post preview/)
+  }
 })
 
 test('execution-critical missing information blocks tool dispatch before agent assignment', async () => {

@@ -1,7 +1,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { registerTool } from '../tools/registry.js'
-import { topologicalOrder, validatePlanGraph } from './plan-graph.js'
+import { registerLinkedInTools } from '../linkedin/tools.js'
+import { parsePlanGraph, topologicalOrder, validatePlanGraph } from './plan-graph.js'
 
 function task(id, overrides = {}) {
   return {
@@ -60,6 +61,86 @@ test('graph validation rejects invalid types, inputs, and missing acceptance cri
     tasks: [task('bad', { requiredInputs: [{ kind: 'not-an-input', description: 'Invalid input.' }] })],
   }), /invalid input kind/)
   assert.throws(() => validatePlanGraph({ tasks: [task('bad', { acceptanceCriteria: [] })] }), /acceptanceCriteria/)
+})
+
+test('model PlanGraphs normalize malformed descriptive fields before strict validation', () => {
+  const cases = [
+    { value: 'draft created', expected: ['draft created'] },
+    { value: undefined, expected: ['Task output prepared for review'] },
+    { value: [], expected: ['Task output prepared for review'] },
+    { value: null, expected: ['Task output prepared for review'] },
+    { value: Array.from({ length: 12 }, (_, index) => `criterion ${index + 1}`), expected: Array.from({ length: 10 }, (_, index) => `criterion ${index + 1}`) },
+    { value: [1, false, {}, null], expected: ['1', 'false'] },
+  ]
+
+  for (const { value, expected } of cases) {
+    const rawTask = task('normalize-fields', {
+      description: null,
+      requiredInputs: null,
+      dependencies: 'missing-dependency',
+      expectedOutput: null,
+      acceptanceCriteria: value,
+      riskClassification: 'unknown',
+      requiredCapability: 'unknown',
+      specialistRole: 'unknown',
+      maxAttempts: 99,
+      completionConditions: 'draft ready',
+    })
+    if (value === undefined) delete rawTask.acceptanceCriteria
+
+    const graph = parsePlanGraph(JSON.stringify({ tasks: [rawTask], ignored: true }))
+    const [normalized] = graph.tasks
+
+    assert.deepEqual(normalized.acceptanceCriteria, expected)
+    assert.deepEqual(normalized.completionConditions, ['draft ready'])
+    assert.equal(normalized.description, 'Complete normalize-fields.')
+    assert.deepEqual(normalized.requiredInputs, [{ kind: 'user_request', description: 'The current user request.' }])
+    assert.deepEqual(normalized.dependencies, [])
+    assert.equal(normalized.expectedOutput, 'Complete normalize-fields. result.')
+    assert.equal(normalized.riskClassification, 'medium')
+    assert.equal(normalized.requiredCapability, 'reasoning')
+    assert.equal(normalized.specialistRole, 'general')
+    assert.equal(normalized.maxAttempts, 5)
+  }
+})
+
+test('model PlanGraphs repair LinkedIn tool references from an allowlisted valid input', () => {
+  const unregister = registerLinkedInTools()
+  try {
+    const graph = parsePlanGraph(JSON.stringify({
+      tasks: [
+        task('task_1', {
+          description: 'Draft a LinkedIn launch post.',
+          requiredInputs: [],
+          acceptanceCriteria: 'The post highlights Biz.',
+          requiredCapability: 'content_creation',
+          specialistRole: 'writer',
+          completionConditions: 'Draft finalized.',
+        }),
+        task('task_2', {
+          description: 'Publish the drafted LinkedIn post.',
+          type: 'tool',
+          requiredInputs: ['task_output'],
+          dependencies: ['task_1'],
+          acceptanceCriteria: 'The post is published after approval.',
+          requiredCapability: 'tool_execution',
+          specialistRole: 'execution',
+          completionConditions: 'Post approved and published.',
+          toolInput: { text: 'Biz is launching: an AI that never sleeps.' },
+        }),
+      ],
+    }), { allowedToolIds: ['linkedin_post'] })
+
+    assert.deepEqual(graph.tasks[0].acceptanceCriteria, ['The post highlights Biz.'])
+    assert.equal(graph.tasks[0].requiredCapability, 'reasoning')
+    assert.equal(graph.tasks[0].specialistRole, 'general')
+    assert.deepEqual(graph.tasks[1].acceptanceCriteria, ['The post is published after approval.'])
+    assert.ok(graph.tasks[1].requiredInputs.some((input) =>
+      input.kind === 'tool_output' && input.toolId === 'linkedin_post'))
+    assert.equal(graph.tasks[1].toolInput.text, 'Biz is launching: an AI that never sleeps.')
+  } finally {
+    unregister.forEach((remove) => remove())
+  }
 })
 
 test('task output inputs must reference a declared dependency', () => {
