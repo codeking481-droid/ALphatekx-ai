@@ -21,7 +21,8 @@ export const config = {
   uploadDir: process.env.UPLOAD_DIR || './uploads',
   workspaceDir: path.resolve(projectRoot, process.env.WORKSPACE_DIR || 'workspace'),
   skillsDir: path.resolve(projectRoot, 'skills'),
-  aiProvider: process.env.AI_PROVIDER?.trim().toLowerCase(),
+  aiProvider: process.env.AI_PROVIDER?.trim().toLowerCase() ||
+    (process.env.AI_PROVIDER_URL_1?.trim() ? 'worker1' : undefined),
   aiRequestTimeoutMs: Number(process.env.AI_REQUEST_TIMEOUT_MS || 60_000),
 }
 

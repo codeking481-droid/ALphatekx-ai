@@ -5,6 +5,7 @@ import { ProviderError } from './errors.js'
 import { selectProvider } from '../intelligence/provider-selector.js'
 import { assertProviderContract } from './interface.js'
 import { createAnthropicProvider } from './anthropic.js'
+import { createProviderRegistry } from './registry.js'
 
 const makeProvider = (options = {}) => createOpenAICompatibleProvider({
   id: 'test-provider',
@@ -80,6 +81,46 @@ test('unconfigured provider refuses model calls with an explicit configuration e
 test('provider selector requires an available provider instead of returning a fake response', () => {
   const registry = { list: () => [{ id: 'openai', available: false }], get: () => null }
   assert.throws(() => selectProvider(registry), /No AI provider is configured/)
+})
+
+test('configured AI workers use the shared key and model with worker one as primary', async () => {
+  const registry = createProviderRegistry({
+    AI_PROVIDER_URL_1: 'https://worker-one.workers.dev',
+    AI_PROVIDER_URL_2: 'https://worker-two.workers.dev/v1/',
+    AI_API_KEY: 'test-only-key',
+    AI_MODEL: 'test-model',
+  })
+  const workers = registry.list().filter(({ id }) => id === 'worker1' || id === 'worker2')
+  assert.deepEqual(workers.map(({ id, available }) => [id, available]), [
+    ['worker1', true],
+    ['worker2', true],
+  ])
+  assert.equal(selectProvider(registry, { preferred: 'worker1' }).id, 'worker1')
+  assert.equal(selectProvider(registry, { preferred: 'worker2', exclude: ['worker1'] }).id, 'worker2')
+
+  const originalFetch = globalThis.fetch
+  let request
+  globalThis.fetch = async (url, options) => {
+    request = { url, options }
+    return new Response(JSON.stringify({
+      model: 'test-model',
+      choices: [{ message: { content: 'hello from worker' } }],
+    }))
+  }
+  try {
+    const result = await registry.get('worker1').generate({ messages: [{ role: 'user', content: 'hello' }] })
+    assert.equal(result.text, 'hello from worker')
+    assert.equal(request.url, 'https://worker-one.workers.dev/v1/chat/completions')
+    assert.equal(request.options.headers.Authorization, 'Bearer test-only-key')
+    assert.equal(JSON.parse(request.options.body).model, 'test-model')
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
+test('AI worker is unavailable until URL, shared API key, and model are configured', () => {
+  const registry = createProviderRegistry({ AI_PROVIDER_URL_1: 'https://worker-one.workers.dev' })
+  assert.equal(registry.list().find(({ id }) => id === 'worker1').available, false)
 })
 
 test('provider selector requires the requested capability', () => {

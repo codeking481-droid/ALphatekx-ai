@@ -24,7 +24,11 @@ export async function invokeWithProviderFallback(registry, provider, request, te
       candidate.capabilities?.[capability]
     ))
     if (!hasFallback) throw error
-    const fallback = selectProvider(registry, { exclude: [provider.id], capability })
+    const fallback = selectProvider(registry, {
+      preferred: provider.id === 'worker1' ? 'worker2' : undefined,
+      exclude: [provider.id],
+      capability,
+    })
     const fallbackRequest = request.jsonSchema && !fallback.capabilities?.structuredOutput
       ? { ...request, jsonSchema: undefined }
       : request

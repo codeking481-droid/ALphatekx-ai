@@ -48,6 +48,33 @@ test('transient provider failures fall back once and record both attempts', asyn
   assert.ok(database.calls.every(([sql, values]) => sql.includes('request_id') && values[1] === 'request-1'))
 })
 
+test('worker one falls back to worker two even when another provider ranks higher', async () => {
+  const primary = provider('worker1', () => {
+    throw new ProviderError('Unavailable', { provider: 'worker1', retryable: true, status: 503 })
+  })
+  const workerFallback = provider('worker2', () => ({ text: 'worker two answer' }))
+  const otherProvider = provider('openai', () => ({ text: 'wrong fallback' }))
+  const registry = {
+    list: () => [
+      { id: 'worker1', available: true, qualityScore: 3, latencyScore: 3, costScore: 3, capabilities: { textGeneration: true } },
+      { id: 'worker2', available: true, qualityScore: 3, latencyScore: 3, costScore: 3, capabilities: { textGeneration: true } },
+      { id: 'openai', available: true, qualityScore: 5, latencyScore: 1, costScore: 1, capabilities: { textGeneration: true } },
+    ],
+    get: (id) => ({ worker1: primary, worker2: workerFallback, openai: otherProvider })[id],
+  }
+
+  const result = await invokeWithProviderFallback(
+    registry,
+    primary,
+    { messages: [{ role: 'user', content: 'hello' }] },
+    { database: telemetryDatabase() },
+  )
+
+  assert.equal(result.provider.id, 'worker2')
+  assert.equal(result.result.text, 'worker two answer')
+  assert.equal(result.fallbackUsed, true)
+})
+
 test('non-transient provider failures are not retried', async () => {
   const primary = provider('primary', () => {
     throw new ProviderError('Invalid request', { provider: 'primary', retryable: false, status: 502 })

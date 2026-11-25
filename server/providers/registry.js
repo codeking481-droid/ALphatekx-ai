@@ -19,17 +19,32 @@ const compatibleProviders = [
   },
 ]
 
+const workerProviders = [
+  { id: 'worker1', name: 'AI Worker 1', urlEnv: 'AI_PROVIDER_URL_1' },
+  { id: 'worker2', name: 'AI Worker 2', urlEnv: 'AI_PROVIDER_URL_2' },
+]
+
 export function createProviderRegistry(env = process.env) {
   const providers = new Map()
   const metrics = new Map()
   const timeoutMs = config.aiRequestTimeoutMs
 
-  for (const definition of compatibleProviders) {
+  const definitions = [
+    ...compatibleProviders,
+    ...workerProviders.map((definition) => ({
+      ...definition,
+      baseUrl: workerBaseUrl(env[definition.urlEnv], definition.urlEnv),
+      key: 'AI_API_KEY',
+      modelEnv: 'AI_MODEL',
+    })),
+  ]
+
+  for (const definition of definitions) {
     metrics.set(definition.id, providerMetrics(definition.id, env))
     providers.set(definition.id, createOpenAICompatibleProvider({
       ...definition,
       apiKey: env[definition.key],
-      model: env[`AI_MODEL_${definition.id.toUpperCase()}`],
+      model: env[definition.modelEnv || `AI_MODEL_${definition.id.toUpperCase()}`],
       timeoutMs,
       extraHeaders: definition.headers,
     }))
@@ -72,6 +87,24 @@ export function createProviderRegistry(env = process.env) {
       return provider.discoverModels()
     },
   }
+}
+
+function workerBaseUrl(value, envName) {
+  if (!value?.trim()) return ''
+
+  let url
+  try {
+    url = new URL(value.trim())
+  } catch {
+    throw new Error(`${envName} must be an absolute HTTPS URL.`)
+  }
+  if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash) {
+    throw new Error(`${envName} must be an HTTPS base URL without credentials, query, or fragment.`)
+  }
+
+  const path = url.pathname.replace(/\/+$/, '')
+  url.pathname = path.toLowerCase().endsWith('/v1') ? path : `${path}/v1`
+  return url.toString().replace(/\/+$/, '')
 }
 
 export const providerRegistry = createProviderRegistry()

@@ -23,9 +23,9 @@ export function createOpenAICompatibleProvider({
       fileProcessing: false,
       embeddings: false,
     },
-    isAvailable: Boolean(apiKey && model),
+    isAvailable: Boolean(baseUrl && apiKey && model),
     async generate({ messages, tools, jsonSchema, signal }) {
-      if (!apiKey || !model) throw new ProviderError(`${name} is not configured.`, { provider: id, status: 503 })
+      if (!baseUrl || !apiKey || !model) throw new ProviderError(`${name} is not configured.`, { provider: id, status: 503 })
       if (jsonSchema) throw new ProviderError(`${name} structured output is not enabled for this model configuration.`, { provider: id, status: 501 })
       const response = await fetchProvider(id, `${baseUrl}/chat/completions`, {
         method: 'POST',
@@ -52,7 +52,7 @@ export function createOpenAICompatibleProvider({
       }
     },
     async *stream({ messages }) {
-      if (!apiKey || !model) throw new ProviderError(`${name} is not configured.`, { provider: id, status: 503 })
+      if (!baseUrl || !apiKey || !model) throw new ProviderError(`${name} is not configured.`, { provider: id, status: 503 })
       const response = await fetchProvider(id, `${baseUrl}/chat/completions`, {
         method: 'POST',
         signal: AbortSignal.timeout(timeoutMs),
@@ -74,7 +74,7 @@ export function createOpenAICompatibleProvider({
       }
     },
     async discoverModels() {
-      if (!apiKey) return []
+      if (!baseUrl || !apiKey) return []
       const response = await fetchProvider(id, `${baseUrl}/models`, {
         signal: AbortSignal.timeout(timeoutMs),
         headers: { Authorization: `Bearer ${apiKey}`, ...extraHeaders },
