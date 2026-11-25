@@ -101,10 +101,10 @@ export default function Memory() {
   };
 
   return (
-    <PageContainer title="Memory" description="Private facts and preferences AlphaTekx can use to personalize future chats.">
+    <PageContainer title="Memory" description="Private facts and preferences Biz can use to personalize future chats.">
       <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
         <p className="max-w-2xl text-xs leading-5 text-muted-foreground">
-          AlphaTekx saves selected durable facts automatically. Passwords, credentials, API keys, and sensitive personal data are blocked.
+          Biz saves selected durable facts automatically. Passwords, credentials, API keys, and sensitive personal data are blocked.
         </p>
         <button
           type="button"

@@ -29,9 +29,9 @@ export default function TopBar({ onMenu }) {
         >
           <Menu className="h-5 w-5" strokeWidth={1.7} />
         </button>
-        <Link to="/" aria-label="AlphaTekx home" className="flex min-w-0 items-center gap-2">
+        <Link to="/" aria-label="Biz home" className="flex min-w-0 items-center gap-2">
           <BrandMark className="h-5 w-5 shrink-0" />
-          <span className="truncate text-[14px] font-semibold tracking-[-0.02em]">AlphaTekx</span>
+          <span className="truncate text-[14px] font-semibold tracking-[-0.02em]">Biz</span>
         </Link>
       </div>
 

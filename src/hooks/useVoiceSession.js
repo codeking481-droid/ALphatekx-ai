@@ -68,7 +68,7 @@ export default function useVoiceSession({ ask }) {
       setReply(answer || "");
       speak(answer || "");
     } catch {
-      setError("AlphaTekx couldn't respond. Tap the microphone to try again.");
+      setError("Biz couldn't respond. Tap the microphone to try again.");
       setStatus("error");
     }
   }
@@ -120,7 +120,7 @@ export default function useVoiceSession({ ask }) {
       }
       setError(
         event.error === "not-allowed"
-          ? "Microphone access is blocked. Allow it in your browser to talk with AlphaTekx."
+          ? "Microphone access is blocked. Allow it in your browser to talk with Biz."
           : "The microphone couldn't be used. Check your device settings."
       );
       setStatus("error");

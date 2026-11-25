@@ -225,18 +225,24 @@ export default function Chat() {
 
   const footnote = (
     <p className="mt-3 text-center text-[11px] text-muted-foreground/60">
-      AlphaTekx can make mistakes. Check important information.
+      Biz can make mistakes. Check important information.
     </p>
   );
 
   return (
     <div className="flex h-full flex-col">
       {isEmpty ? (
-        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
-          <div className="mx-auto flex min-h-full w-full max-w-2xl flex-col justify-center px-5 pb-8 pt-6 sm:px-8 sm:pb-14 sm:pt-10">
-            <ChatWelcome onPick={setValue} />
+        <div className="flex min-h-0 flex-1 flex-col">
+          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+            <div className="mx-auto flex min-h-full w-full max-w-2xl flex-col px-4 pt-4 sm:px-8 sm:pt-10">
+              <div className="flex flex-1 flex-col justify-center py-4">
+                <ChatWelcome onPick={setValue} />
+              </div>
+            </div>
+          </div>
 
-            <div className="mt-7 sm:mt-10">
+          <div className="shrink-0 bg-gradient-to-t from-background via-background to-background/0">
+            <div className="mx-auto w-full max-w-2xl px-4 pb-[calc(0.75rem+env(safe-area-inset-bottom))] pt-3 sm:px-8 sm:pb-5">
               {error && (
                 <div className="mb-2.5 rounded-xl border border-destructive/25 bg-destructive/[0.06] px-3 py-2 text-[12.5px] text-destructive">
                   {error}

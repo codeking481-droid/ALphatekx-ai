@@ -82,7 +82,7 @@ export default function VoiceMode({ onAsk, onClose }) {
             <p className="text-[14px] leading-relaxed text-muted-foreground">
               {status === "unsupported"
                 ? "Your browser can't run conversations by voice. Typing and dictation still work."
-                : "Speak naturally. AlphaTekx listens, answers out loud, then listens again."}
+                : "Speak naturally. Biz listens, answers out loud, then listens again."}
             </p>
           )}
         </div>

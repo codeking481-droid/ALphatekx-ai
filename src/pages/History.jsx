@@ -109,7 +109,7 @@ export default function History() {
   return (
     <PageContainer
       title="History"
-      description="Every conversation you've had with AlphaTekx, kept for you to return to."
+      description="Every conversation you've had with Biz, kept for you to return to."
       actions={
         <Link
           to="/"

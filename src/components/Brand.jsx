@@ -10,13 +10,12 @@ export function BrandMark({ className = "h-7 w-7" }) {
       className={cn("text-primary", className)}
     >
       <path
-        d="M4.6 19.4 12 4.6l7.4 14.8"
+        d="M7.5 4.5h4.8a3.6 3.6 0 0 1 0 7.2H7.5zm0 7.2h5.4a3.9 3.9 0 0 1 0 7.8H7.5z"
         stroke="currentColor"
         strokeWidth="1.9"
         strokeLinecap="round"
         strokeLinejoin="round"
       />
-      <path d="M8.5 14.4h7" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" />
     </svg>
   );
 }
@@ -26,7 +25,7 @@ export default function Brand({ compact = false, className }) {
     <span className={cn("flex items-center gap-2.5", className)}>
       <BrandMark className={compact ? "h-6 w-6" : "h-7 w-7"} />
       <span className="text-[15px] font-semibold tracking-[-0.01em] text-foreground">
-        AlphaTekx
+        Biz
       </span>
     </span>
   );

@@ -42,7 +42,7 @@ const AuthenticatedApp = () => {
   if (authError) {
     return (
       <div className="fixed inset-0 flex flex-col items-center justify-center gap-4 p-6 text-center">
-        <p className="text-sm text-muted-foreground">AlphaTekx couldn't connect to its account service.</p>
+        <p className="text-sm text-muted-foreground">Biz couldn't connect to its account service.</p>
         <button type="button" onClick={checkAppState} className="rounded-lg bg-primary px-4 py-2 text-sm text-primary-foreground">
           Try again
         </button>

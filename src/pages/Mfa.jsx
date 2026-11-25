@@ -55,7 +55,7 @@ export default function Mfa() {
       icon={ShieldCheck}
       title={isChallenge ? "Two-factor verification" : "Set up an authenticator"}
       subtitle={isChallenge ? "Enter the code from your authenticator app." : "Protect your account with a time-based authenticator code."}
-      footer={<Link to="/" className="text-primary font-medium hover:underline">Back to AlphaTekx</Link>}
+      footer={<Link to="/" className="text-primary font-medium hover:underline">Back to Biz</Link>}
     >
       {error && <div className="mb-4 p-3 rounded-lg bg-destructive/10 text-destructive text-sm">{error}</div>}
       {setup?.totpURI ? (

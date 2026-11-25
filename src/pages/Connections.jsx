@@ -46,7 +46,7 @@ export default function Connections() {
   return (
     <PageContainer
       title="Connections"
-      description="AlphaTekx works best with the tools you already use. Each connection will be authorised by you, and only used when you ask."
+      description="Biz works best with the tools you already use. Each connection will be authorised by you, and only used when you ask."
     >
       <div className="rounded-2xl border border-border/70 px-4 py-3.5">
         <div className="flex flex-wrap items-center justify-between gap-2">
@@ -57,7 +57,7 @@ export default function Connections() {
         </div>
         <p className="mt-1.5 max-w-lg text-[12.5px] leading-relaxed text-muted-foreground">
           No services are connected to your account yet. Connections are being prepared for
-          AlphaTekx — nothing is linked or sharing data until one is available and you approve it.
+          Biz — nothing is linked or sharing data until one is available and you approve it.
         </p>
       </div>
 

@@ -1,6 +1,6 @@
 # AlphaTekx AI
 
-AlphaTekx is a React/Vite application with an independent Node.js modular-monolith API and PostgreSQL persistence. Provider credentials and authentication secrets are server-only.
+AlphaTekx is a React/Vite application with an independent Node.js modular-monolith API and PostgreSQL persistence. Its AI assistant is named Biz. Provider credentials and authentication secrets are server-only.
 
 ## Architecture
 

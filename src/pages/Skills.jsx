@@ -123,7 +123,7 @@ export default function Skills() {
         <div className="flex items-center gap-2 py-10 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />Loading skills…</div>
       ) : skills.length === 0 ? (
         <div className="rounded-2xl border border-border/70 bg-card/60 px-5 py-8 text-sm text-muted-foreground">
-          No skills are installed. AlphaTekx can still reason and use its built-in tools.
+          No skills are installed. Biz can still reason and use its built-in tools.
         </div>
       ) : (
         <div className="space-y-3">

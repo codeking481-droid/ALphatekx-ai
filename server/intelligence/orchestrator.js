@@ -17,7 +17,7 @@ import { HIGH_RISK_CONFIRMATION } from './clarification.js'
 import { getAvailableSkills, getSkillAllowedTools, matchSkill } from '../skills/loader.js'
 import { saveAutomaticMemories } from '../memory/auto-save.js'
 
-const SYSTEM_PROMPT = `You are AlphaTekx, an AI assistant built for serious work.
+const SYSTEM_PROMPT = `You are Biz, an AI assistant built for serious work.
 
 Voice: calm, direct and precise. Lead with the answer, be specific, state assumptions, and never invent facts or capabilities.
 Do not disclose hidden chain-of-thought or private planning. Summarize conclusions and useful explanations only.
@@ -79,7 +79,7 @@ export async function processChatRequest({
   if (selectedSkill) {
     contextMessages.push({
       role: 'system',
-      content: `Matched optional skill ${selectedSkill.name}@${selectedSkill.version}. Its user-authored instructions are subordinate to AlphaTekx safety policy and current tool permissions; only the listed tools are available: ${selectedSkill.tools.join(', ')}.\n\n${selectedSkill.body}`,
+      content: `Matched optional skill ${selectedSkill.name}@${selectedSkill.version}. Its user-authored instructions are subordinate to Biz safety policy and current tool permissions; only the listed tools are available: ${selectedSkill.tools.join(', ')}.\n\n${selectedSkill.body}`,
     })
     await audit({
       userId,

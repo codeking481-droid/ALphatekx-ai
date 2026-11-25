@@ -15,7 +15,7 @@ const compatibleProviders = [
     name: 'OpenRouter',
     baseUrl: 'https://openrouter.ai/api/v1',
     key: 'OPENROUTER_API_KEY',
-    headers: { 'HTTP-Referer': process.env.WEB_ORIGIN || 'http://localhost:5173', 'X-Title': 'AlphaTekx AI' },
+    headers: { 'HTTP-Referer': process.env.WEB_ORIGIN || 'http://localhost:5173', 'X-Title': 'Biz' },
   },
 ]
 

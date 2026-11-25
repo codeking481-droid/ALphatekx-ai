@@ -156,7 +156,7 @@ export default function Composer({ value, onChange, onSend, onVoice, sending }) 
           value={value}
           onChange={handleInput}
           onKeyDown={handleKeyDown}
-          placeholder="How can I help you today?"
+          placeholder="Message Biz"
           className="max-h-[220px] min-h-12 w-full resize-none bg-transparent px-2.5 pb-2 pt-1 text-[16px] leading-[1.6] text-foreground placeholder:text-muted-foreground/60 focus:outline-none sm:min-h-0 sm:text-[15px]"
         />
 

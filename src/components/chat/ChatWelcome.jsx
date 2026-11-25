@@ -37,7 +37,7 @@ export default function ChatWelcome({ onPick }) {
         {greeting()}
       </h1>
       <p className="mt-3 max-w-sm text-[14px] leading-relaxed text-muted-foreground sm:mt-3.5 sm:text-[14.5px]">
-        What would you like to think through?
+        What would you like to work on?
       </p>
 
       <div className="-mx-5 mt-7 flex w-[calc(100%+2.5rem)] snap-x snap-mandatory gap-2.5 overflow-x-auto px-5 pb-2 text-left [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:mx-0 sm:mt-8 sm:grid sm:w-full sm:grid-cols-3 sm:snap-none sm:justify-center sm:gap-2 sm:overflow-visible sm:px-0 sm:pb-0">

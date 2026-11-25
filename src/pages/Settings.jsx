@@ -75,7 +75,7 @@ export default function Settings() {
   return (
     <PageContainer
       title="Settings"
-      description="Your account and how AlphaTekx looks and behaves."
+      description="Your account and how Biz looks and behaves."
     >
       <Section title="Profile" description="The name shown on your account.">
         <div className="max-w-md space-y-4">
@@ -132,7 +132,7 @@ export default function Settings() {
         </div>
       </Section>
 
-      <Section title="Appearance" description="AlphaTekx follows your preference across sessions.">
+      <Section title="Appearance" description="Biz follows your preference across sessions.">
         <div className="grid max-w-md grid-cols-3 gap-2">
           {THEMES.map(({ value, label, icon: Icon }) => {
             const active = theme === value;
@@ -157,7 +157,7 @@ export default function Settings() {
         {settingsError && <p className="mt-3 text-[12.5px] text-destructive">{settingsError}</p>}
       </Section>
 
-      <Section title="Memory" description="Review and manage the private facts and preferences AlphaTekx remembers.">
+      <Section title="Memory" description="Review and manage the private facts and preferences Biz remembers.">
         <Link to="/memory" className="text-[13px] font-medium text-primary hover:underline">
           Manage saved memories
         </Link>
@@ -169,7 +169,7 @@ export default function Settings() {
         </Link>
       </Section>
 
-      <Section title="Account" description="Sign out of AlphaTekx on this device.">
+      <Section title="Account" description="Sign out of Biz on this device.">
         <div className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-border/70 px-4 py-3.5">
           <div className="min-w-0">
             <p className="truncate text-[13.5px] font-medium text-foreground">

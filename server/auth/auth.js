@@ -16,7 +16,7 @@ export const auth = betterAuth({
     requireEmailVerification: false,
     sendResetPassword: async ({ user, url }) => sendPasswordResetEmail(user.email, url),
   },
-  appName: 'AlphaTekx AI',
+  appName: 'Biz',
   user: {
     additionalFields: {
       role: { type: 'string', required: false, defaultValue: 'user', input: false },

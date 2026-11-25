@@ -14,7 +14,7 @@ export async function sendPasswordResetEmail(email, url) {
   await transporter.sendMail({
     from: SMTP_FROM,
     to: email,
-    subject: 'Reset your AlphaTekx password',
-    text: `Use this link to reset your AlphaTekx password: ${url}`,
+    subject: 'Reset your Biz password',
+    text: `Use this link to reset your Biz password: ${url}`,
   })
 }

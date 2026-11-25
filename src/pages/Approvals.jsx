@@ -133,7 +133,7 @@ export default function Approvals() {
         </span>
         <div>
           <h1 className="text-xl font-semibold tracking-tight">Approvals</h1>
-          <p className="mt-1 text-sm text-muted-foreground">Review tool and skill requests before AlphaTekx uses or installs them.</p>
+          <p className="mt-1 text-sm text-muted-foreground">Review tool and skill requests before Biz uses or installs them.</p>
         </div>
       </div>
 

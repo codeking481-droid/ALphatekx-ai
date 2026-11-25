@@ -15,9 +15,9 @@ export default function AuthLayout({ icon: Icon, title, subtitle, footer, childr
   return (
     <main className="flex min-h-screen items-center justify-center bg-background px-5 py-10">
       <div className="w-full max-w-md">
-        <Link to="/" className="mx-auto mb-8 flex w-fit items-center gap-2 text-foreground" aria-label="AlphaTekx home">
+        <Link to="/" className="mx-auto mb-8 flex w-fit items-center gap-2 text-foreground" aria-label="Biz home">
           <BrandMark className="h-7 w-7" />
-          <span className="text-sm font-medium tracking-tight">AlphaTekx</span>
+          <span className="text-sm font-medium tracking-tight">Biz</span>
         </Link>
         <section className="rounded-2xl border border-border/80 bg-card p-6 shadow-sm sm:p-8">
           <div className="mb-6 text-center">
