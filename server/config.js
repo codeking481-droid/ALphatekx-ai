@@ -6,7 +6,7 @@ const isProduction = process.env.NODE_ENV === 'production'
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const webOrigin = process.env.WEB_ORIGIN || (isProduction ? 'https://alphatekx-ai.pages.dev' : 'http://localhost:5173')
 const authUrl = process.env.BETTER_AUTH_URL || (
-  isProduction ? 'https://129.213.161.206.sslip.io' : `http://localhost:${process.env.PORT || 3001}`
+  isProduction ? 'https://alphatekx-ai.pages.dev' : `http://localhost:${process.env.PORT || 3001}`
 )
 
 export const config = {

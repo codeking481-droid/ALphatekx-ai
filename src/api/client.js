@@ -1,4 +1,6 @@
-const API_BASE_URL = (import.meta.env.VITE_API_URL || '').replace(/\/+$/, '')
+const API_BASE_URL = import.meta.env.PROD
+  ? ''
+  : (import.meta.env.VITE_API_URL || '').replace(/\/+$/, '')
 
 async function request(path, options = {}) {
   const headers = new Headers(options.headers || {})
