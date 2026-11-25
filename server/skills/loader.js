@@ -156,11 +156,14 @@ export async function getAvailableSkills({ userId, database, skillsDir = config.
   const skills = []
   for (const skill of bundled.skills) {
     const builtin = skill.name === 'create-skill'
+    const enabledByDefault = builtin || skill.name === 'manage-linkedin'
     skills.push({
       ...skill,
       builtin,
       bundled: !builtin,
-      enabled: builtin || enabledByName.get(skill.name) === true,
+      enabled: builtin || (enabledByName.has(skill.name)
+        ? enabledByName.get(skill.name) === true
+        : enabledByDefault),
     })
   }
   const bundledNames = new Set(skills.map(({ name }) => name))

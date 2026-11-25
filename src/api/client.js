@@ -42,6 +42,20 @@ export const api = {
     verifyTotp: (code) => request('/api/auth/two-factor/verify-totp', { method: 'POST', body: { code } }),
     enableTotp: (password) => request('/api/auth/two-factor/enable', { method: 'POST', body: { password } }),
   },
+  linkedin: {
+    status: () => request('/api/linkedin/status'),
+    disconnect: () => request('/api/linkedin/disconnect', { method: 'DELETE' }),
+    post: ({ text, approved, approvalId = undefined }) => request('/api/linkedin/post', {
+      method: 'POST',
+      body: { text, approved, approvalId },
+    }),
+    comments: (postId) => request(`/api/linkedin/comments?${new URLSearchParams({ postId })}`),
+    reply: ({ commentId, text, approved, approvalId }) => request('/api/linkedin/reply', {
+      method: 'POST',
+      body: { commentId, text, approved, approvalId },
+    }),
+    searchPeople: (query) => request(`/api/linkedin/search?${new URLSearchParams({ query })}`),
+  },
   settings: {
     get: () => request('/api/settings'),
     update: (preferences) => request('/api/settings', { method: 'PATCH', body: preferences }),

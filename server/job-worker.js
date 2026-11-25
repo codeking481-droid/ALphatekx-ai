@@ -7,6 +7,7 @@ import { syncToolDefinitions } from './tools/sync.js'
 import { registerWebSearchTool } from './tools/web-search.js'
 import { registerFileTools } from './tools/file-tools.js'
 import { registerSkillCreateTool } from './skills/skill-create.js'
+import { registerLinkedInTools } from './linkedin/tools.js'
 import { initializeSkills } from './skills/service.js'
 import { recoverStaleJobs } from './jobs/service.js'
 import { createJobWorker } from './jobs/worker.js'
@@ -14,6 +15,7 @@ import { log } from './observability/logger.js'
 
 validateWorkerConfig()
 registerWebSearchTool()
+registerLinkedInTools()
 registerFileTools()
 registerSkillCreateTool()
 await initializeSkills()

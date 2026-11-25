@@ -66,3 +66,14 @@ test('smart memory migration allows the four memory types without deleting exist
   }
   assert.doesNotMatch(migration, /\bDROP\s+(?:TABLE|COLUMN)|\bDELETE\s+FROM|\bTRUNCATE\b/i)
 })
+
+test('LinkedIn migration stores encrypted user credentials and short-lived approvals additively', async () => {
+  const migration = await readFile(new URL('./007_linkedin_connections.sql', import.meta.url), 'utf8')
+  assert.match(migration, /CREATE TABLE IF NOT EXISTS linkedin_connections/)
+  assert.match(migration, /token_encrypted BYTEA NOT NULL/)
+  assert.match(migration, /CREATE TABLE IF NOT EXISTS linkedin_oauth_states/)
+  assert.match(migration, /CREATE TABLE IF NOT EXISTS linkedin_action_approvals/)
+  assert.match(migration, /CHECK \(action IN \('post', 'reply'\)\)/)
+  assert.match(migration, /REFERENCES "user"\("id"\) ON DELETE CASCADE/)
+  assert.doesNotMatch(migration, /\bDROP\s+(?:TABLE|COLUMN)|\bDELETE\s+FROM|\bTRUNCATE\b/i)
+})

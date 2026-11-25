@@ -40,12 +40,24 @@ import {
 } from '../skills/service.js'
 import { listToolPermissionGrants, revokeToolPermissionGrant } from '../tools/permissions.js'
 import { createRateLimiter } from './rate-limit.js'
+import {
+  beginLinkedInConnect,
+  completeLinkedInConnect,
+  createLinkedInPost,
+  disconnectLinkedIn,
+  getLinkedInComments,
+  getLinkedInStatus,
+  replyToLinkedInComment,
+  searchLinkedInPeople,
+} from '../linkedin/service.js'
+import { registerLinkedInTools } from '../linkedin/tools.js'
 
 const app = express()
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_FILE_BYTES, files: 1 } })
 const skillUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 64 * 1024, files: 1 } })
 const chatRateLimit = createRateLimiter({ limit: 10, windowMs: 60_000 })
 registerWebSearchTool()
+registerLinkedInTools()
 registerFileTools()
 registerSkillCreateTool()
 
@@ -59,6 +71,91 @@ app.get('/api/health', async (_req, res, next) => {
   try {
     await pool.query('SELECT 1')
     res.json({ status: 'ok', database: 'ok' })
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.get('/api/linkedin/status', requireUser, async (req, res, next) => {
+  try {
+    res.json(await getLinkedInStatus({ userId: req.user.id }))
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.get('/api/linkedin/connect', requireUser, async (req, res, next) => {
+  try {
+    res.redirect(302, await beginLinkedInConnect({ userId: req.user.id }))
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.get('/api/linkedin/callback', requireUser, async (req, res, next) => {
+  try {
+    const result = await completeLinkedInConnect({
+      userId: req.user.id,
+      state: req.query.state,
+      code: req.query.code,
+      providerError: req.query.error,
+    })
+    const state = result.denied ? 'denied' : 'connected'
+    res.redirect(302, `${config.webOrigin}/connections?linkedin=${state}`)
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.delete('/api/linkedin/disconnect', requireUser, async (req, res, next) => {
+  try {
+    await disconnectLinkedIn({ userId: req.user.id })
+    res.status(204).end()
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.post('/api/linkedin/post', requireUser, requireObjectBody, async (req, res, next) => {
+  try {
+    const result = await createLinkedInPost({
+      userId: req.user.id,
+      text: req.body.text,
+      approved: req.body.approved,
+      approvalId: req.body.approvalId,
+    })
+    res.status(result.preview ? 200 : 201).json(result)
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.get('/api/linkedin/comments', requireUser, async (req, res, next) => {
+  try {
+    res.json(await getLinkedInComments({ userId: req.user.id, postId: req.query.postId }))
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.get('/api/linkedin/search', requireUser, async (req, res, next) => {
+  try {
+    res.json(await searchLinkedInPeople({ userId: req.user.id, query: req.query.query }))
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.post('/api/linkedin/reply', requireUser, requireObjectBody, async (req, res, next) => {
+  try {
+    const result = await replyToLinkedInComment({
+      userId: req.user.id,
+      commentId: req.body.commentId,
+      text: req.body.text,
+      approved: req.body.approved,
+      approvalId: req.body.approvalId,
+    })
+    res.status(result.preview ? 200 : 201).json(result)
   } catch (error) {
     next(error)
   }
