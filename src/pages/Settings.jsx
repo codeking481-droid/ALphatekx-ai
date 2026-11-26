@@ -14,6 +14,13 @@ const THEMES = [
   { value: "system", label: "System", icon: Monitor },
 ];
 
+const AI_PROVIDER_ORDER = [
+  { id: "openrouter", label: "Primary" },
+  { id: "gemini", label: "Fallback 1" },
+  { id: "workers_ai", label: "Fallback 2" },
+  { id: "groq", label: "Fallback 3" },
+];
+
 export default function Settings() {
   const [user, setUser] = useState(null);
   const [fullName, setFullName] = useState("");
@@ -241,26 +248,36 @@ export default function Settings() {
         {settingsError && <p className="mt-3 text-[12.5px] text-destructive">{settingsError}</p>}
       </Section>
 
-      <Section title="AI provider" description="Workers AI is primary, with Groq and a deterministic local fallback.">
+      <Section title="AI provider" description="Free-tier chain: OpenRouter → Gemini → Workers AI → Groq → local fallback.">
         <div className="max-w-xl space-y-3">
-          {aiProviders.filter((provider) => ["workers_ai", "groq"].includes(provider.id)).map((provider) => {
+          {AI_PROVIDER_ORDER.map(({ id, label }) => {
+            const provider = aiProviders.find((item) => item.id === id);
+            if (!provider) return null;
             const status = providerStatus[provider.id];
-            const label = provider.id === "workers_ai" ? "Primary" : "Fallback";
             const busy = providerTestBusy === provider.id;
             const initialStatus = !status && provider.available
               ? "ready"
-              : !status && provider.id === "groq"
+              : !status && provider.id === "groq" && !provider.available
                 ? "not_set"
                 : !status
                   ? "not_configured"
                   : status.status;
+            const saved = savedKeys.find((item) => item.provider === provider.id);
+            const keySuffix = saved?.keySuffix || provider.keySuffix;
             return (
               <div key={provider.id} className="rounded-xl border border-border/70 p-3.5">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
-                    <p className="text-[13px] font-medium">{label}: {provider.name}</p>
+                    <p className="flex items-center gap-2 text-[13px] font-medium">
+                      {label}: {provider.name}
+                      <span className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[9px] font-semibold tracking-wide text-emerald-600">
+                        FREE
+                      </span>
+                    </p>
                     <p className="mt-1 text-[11px] text-muted-foreground">
                       {provider.model || "Model not configured"}
+                      {provider.secretSource ? ` · ${provider.secretSource}` : ""}
+                      {keySuffix ? ` · key ending in ${keySuffix}` : ""}
                     </p>
                   </div>
                   <div className="flex items-center gap-2">
@@ -275,7 +292,7 @@ export default function Settings() {
                       </span>
                     )}
                     {initialStatus === "not_set" && (
-                      <span className="text-[11.5px] text-muted-foreground">Not Set</span>
+                      <span className="text-[11.5px] text-muted-foreground">Not set</span>
                     )}
                     {initialStatus === "not_configured" && (
                       <span className="text-[11.5px] text-destructive">Not configured</span>
@@ -306,7 +323,7 @@ export default function Settings() {
           <div className="rounded-xl border border-border/70 p-3.5">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
-                <p className="text-[13px] font-medium">Fallback: Local</p>
+                <p className="text-[13px] font-medium">Fallback 4: Local</p>
                 <p className="mt-1 text-[11px] text-muted-foreground">Deterministic templates · Always Ready</p>
               </div>
               <span className="text-[11.5px] font-medium text-emerald-600">Always Ready</span>
@@ -378,32 +395,6 @@ export default function Settings() {
           )}
         </div>
       </Section>
-
-      <details className="mb-6 rounded-2xl border border-border/70 bg-card/30 p-4">
-        <summary className="cursor-pointer text-sm font-semibold">Advanced - Optional AI providers</summary>
-        <p className="mt-2 text-[12px] text-muted-foreground">
-          These providers are not part of Biz's primary fallback chain. They are used only when their server credentials and model are configured.
-        </p>
-        <div className="mt-3 max-w-xl space-y-2">
-          {["openrouter", "gemini"].map((id) => {
-            const provider = aiProviders.find((item) => item.id === id);
-            const saved = savedKeys.find((item) => item.provider === id);
-            return (
-              <div key={id} className="rounded-xl border border-border/70 px-3.5 py-3">
-                <p className="text-[13px] font-medium">{id === "openrouter" ? "OpenRouter" : "Gemini"}</p>
-                <p className="mt-1 text-[11px] text-muted-foreground">
-                  {provider?.model || "Not configured"}
-                  {(provider?.keySuffix || saved?.keySuffix)
-                    ? ` · key ending in ${provider?.keySuffix || saved?.keySuffix}`
-                    : ""}
-                  {provider?.secretSource ? ` · ${provider.secretSource}` : ""}
-                  {provider?.available ? " · Available" : " · Disabled"}
-                </p>
-              </div>
-            );
-          })}
-        </div>
-      </details>
 
       <Section title="Your API keys (BYOK)" description="Keys are encrypted on the server and never shown again after saving.">
         <div className="max-w-xl space-y-3">

@@ -6,14 +6,17 @@ export function createOpenAICompatibleProvider({
   baseUrl,
   apiKey,
   model,
+  fallbackModels = [],
   timeoutMs,
   extraHeaders = {},
   supports = { textGeneration: true, streaming: true, toolCalling: true },
 }) {
+  const models = [...new Set([model, ...fallbackModels].filter((value) => typeof value === 'string' && value.trim()))]
   return {
     id,
     name,
     model,
+    models,
     capabilities: {
       textGeneration: Boolean(model),
       streaming: Boolean(model) && Boolean(supports.streaming),
@@ -26,31 +29,42 @@ export function createOpenAICompatibleProvider({
     isAvailable: Boolean(baseUrl && apiKey && model),
     async generate({ messages, tools, jsonSchema, signal }) {
       if (!baseUrl || !apiKey || !model) throw new ProviderError(`${name} is not configured.`, { provider: id, status: 503 })
-      const response = await fetchProvider(id, `${baseUrl}/chat/completions`, {
-        method: 'POST',
-        signal: providerRequestSignal(signal, timeoutMs),
-        headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json', ...extraHeaders },
-        body: JSON.stringify({
-          model,
-          messages,
-          ...(['groq', 'openrouter'].includes(id) ? { temperature: 0.3 } : {}),
-          ...(jsonSchema ? { response_format: { type: 'json_object' } } : {}),
-          ...(tools?.length ? { tools, tool_choice: 'auto' } : {}),
-        }),
-      })
-      if (!response.ok) throw providerError(id, response, await responseErrorDetail(response, apiKey))
-      const data = await response.json()
-      const choice = data.choices?.[0]
-      return {
-        text: choice?.message?.content || '',
-        toolCalls: (choice?.message?.tool_calls || []).map((call) => ({
-          id: call.id,
-          name: call.function.name,
-          arguments: JSON.parse(call.function.arguments || '{}'),
-        })),
-        usage: data.usage || null,
-        model: data.model || model,
+      let lastError
+      for (let index = 0; index < models.length; index += 1) {
+        const activeModel = models[index]
+        try {
+          const response = await fetchProvider(id, `${baseUrl}/chat/completions`, {
+            method: 'POST',
+            signal: providerRequestSignal(signal, timeoutMs),
+            headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json', ...extraHeaders },
+            body: JSON.stringify({
+              model: activeModel,
+              messages,
+              ...(['groq', 'openrouter'].includes(id) ? { temperature: 0.3 } : {}),
+              ...(jsonSchema ? { response_format: { type: 'json_object' } } : {}),
+              ...(tools?.length ? { tools, tool_choice: 'auto' } : {}),
+            }),
+          })
+          if (!response.ok) throw providerError(id, response, await responseErrorDetail(response, apiKey))
+          const data = await response.json()
+          const choice = data.choices?.[0]
+          return {
+            text: choice?.message?.content || '',
+            toolCalls: (choice?.message?.tool_calls || []).map((call) => ({
+              id: call.id,
+              name: call.function.name,
+              arguments: JSON.parse(call.function.arguments || '{}'),
+            })),
+            usage: data.usage || null,
+            model: data.model || activeModel,
+          }
+        } catch (error) {
+          if (signal?.aborted) throw signal.reason || error
+          lastError = error
+          if (index === models.length - 1 || !canTryAlternateModel(error)) throw error
+        }
       }
+      throw lastError || new ProviderError(`${name} has no configured models.`, { provider: id, status: 503 })
     },
     async *stream({ messages }) {
       if (!baseUrl || !apiKey || !model) throw new ProviderError(`${name} is not configured.`, { provider: id, status: 503 })
@@ -117,6 +131,7 @@ async function responseErrorDetail(response, apiKey) {
     } catch {
       message = body
     }
+
     return (apiKey ? String(message).split(apiKey).join('[REDACTED_PROVIDER_KEY]') : String(message))
       .replace(/gsk_[A-Za-z0-9_-]+/gi, '[REDACTED_GROQ_KEY]')
       .replace(/sk-or-v1-[A-Za-z0-9_-]+/gi, '[REDACTED_OPENROUTER_KEY]')
@@ -127,4 +142,9 @@ async function responseErrorDetail(response, apiKey) {
   } catch {
     return ''
   }
+}
+
+function canTryAlternateModel(error) {
+  return Boolean(error.upstreamStatus) &&
+    ![401, 402, 403, 429].includes(error.upstreamStatus)
 }

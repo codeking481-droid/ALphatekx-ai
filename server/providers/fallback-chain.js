@@ -2,7 +2,7 @@ import { log } from '../observability/logger.js'
 import { ProviderError } from './errors.js'
 import { invokeModel } from '../intelligence/model-invocation.js'
 
-export const FALLBACK_PROVIDER_IDS = ['workers_ai', 'groq']
+export const FALLBACK_PROVIDER_IDS = ['openrouter', 'gemini', 'workers_ai', 'groq']
 
 export const localFallbackProvider = {
   id: 'local-fallback',
@@ -18,13 +18,25 @@ export function formatFallbackTrace(trace) {
   if (!failures.length) return ''
   const uniqueFailures = [...new Map(failures.map((item) => [item.provider, item])).values()]
   const providerNames = uniqueFailures.map((item) => {
+    if (isFreeQuotaFailure(item.provider, item.upstreamStatus)) return `${item.name} free quota used`
     const status = item.upstreamStatus ? ` ${item.upstreamStatus}` : ''
     return `${item.name} failed${status}`
   })
   const used = trace.at(-1)
   const lead = providerNames.join(', ')
-  if (used.status === 'local') return `Main AI was down (${lead}). I used the local fallback.`
+  if (used.status === 'local') return `${lead}; tried the local fallback.`
   return `${lead}; tried ${used.name} fallback.`
+}
+
+function isFreeQuotaFailure(provider, upstreamStatus) {
+  return (provider === 'openrouter' && upstreamStatus === 402) ||
+    (provider === 'gemini' && upstreamStatus === 429)
+}
+
+export function freeQuotaFailureMessage(provider, upstreamStatus) {
+  return isFreeQuotaFailure(provider, upstreamStatus)
+    ? 'Free quota used, tried next fallback.'
+    : null
 }
 
 export async function invokeFallbackChain(registry, preferredProvider, messages, options = {}) {
@@ -92,6 +104,7 @@ export async function invokeFallbackChain(registry, preferredProvider, messages,
         if (options.signal?.aborted) throw options.signal.reason || error
         lastError = error
         const upstreamStatus = error.upstreamStatus || (error.status >= 400 ? error.status : null)
+        const freeQuotaFailure = isFreeQuotaFailure(provider.id, upstreamStatus)
         if (error.code === 'invalid_json' && attempt === 1) {
           log('warn', 'ai.provider.invalid_json', {
             provider: provider.id,
@@ -117,9 +130,11 @@ export async function invokeFallbackChain(registry, preferredProvider, messages,
           model: provider.model || null,
           upstreamStatus,
           code: error.code || null,
-          message: redactSecrets(error.message || 'Provider request failed.'),
+          message: freeQuotaFailure
+            ? 'Free-tier quota exhausted.'
+            : redactSecrets(error.message || 'Provider request failed.'),
         })
-        if (error.retryable !== false && attempt === 1) {
+        if (!freeQuotaFailure && error.retryable !== false && attempt === 1) {
           continue
         }
         if (!hasPrimaryChain && error.retryable === false) throw error

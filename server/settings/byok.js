@@ -29,21 +29,21 @@ const PROVIDERS = {
   gemini: {
     name: 'Gemini',
     defaultModel: 'gemini-2.5-flash',
-    create: (key, env) => createGeminiProvider({
+    create: (key) => createGeminiProvider({
       apiKey: key,
-      model: env.AI_MODEL_GEMINI || 'gemini-2.5-flash',
+      model: 'gemini-2.5-flash',
       timeoutMs: config.aiRequestTimeoutMs,
     }),
   },
   groq: {
     name: 'Groq',
     defaultModel: 'llama-3.3-70b-versatile',
-    create: (key, env) => createOpenAICompatibleProvider({
+    create: (key) => createOpenAICompatibleProvider({
       id: 'groq',
       name: 'Groq',
       baseUrl: 'https://api.groq.com/openai/v1',
       apiKey: key,
-      model: env.AI_MODEL_GROQ || 'llama-3.3-70b-versatile',
+      model: 'llama-3.3-70b-versatile',
       timeoutMs: config.aiRequestTimeoutMs,
     }),
   },

@@ -57,7 +57,7 @@ test('a saved user provider overrides its default and preserves other providers 
     userId: 'user-1',
     database,
     registry: baseRegistry,
-    env: { AI_MODEL_OPENAI: 'test-model' },
+    env: { AI_MODEL_OPENAI: 'test-model', AI_MODEL_GROQ: 'paid-groq-model' },
   }, async (registry) => {
     selected = registry.list()
     assert.equal(registry.get('groq').model, 'llama-3.3-70b-versatile')
@@ -66,4 +66,32 @@ test('a saved user provider overrides its default and preserves other providers 
 
   assert.deepEqual(selected.map(({ id }) => id), ['workers_ai', 'groq'])
   assert.doesNotMatch(JSON.stringify(selected), /sk-user-owned-9876/)
+})
+
+test('a saved Gemini key is restricted to the configured free-tier model', async () => {
+  const { encryptCredential } = await import('../integrations/credential-vault.js')
+  const sealed = encryptCredential(JSON.stringify({ apiKey: 'AIzaSy-user-owned-9876' }))
+  const database = {
+    async query() {
+      return {
+        rows: [{
+          provider_id: 'byok:gemini',
+          encrypted_credentials: sealed.value,
+          credential_key_version: sealed.version,
+        }],
+      }
+    },
+  }
+  const registry = {
+    list: () => [],
+    get: () => null,
+  }
+  await withUserProviderRegistry({
+    userId: 'user-1',
+    database,
+    registry,
+    env: { AI_MODEL_GEMINI: 'gemini-pro' },
+  }, async (userRegistry) => {
+    assert.equal(userRegistry.get('gemini').model, 'gemini-2.5-flash')
+  })
 })

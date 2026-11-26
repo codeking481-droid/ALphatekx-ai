@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { invokeFallbackChain, formatFallbackTrace } from './fallback-chain.js'
+import { invokeFallbackChain, formatFallbackTrace, freeQuotaFailureMessage } from './fallback-chain.js'
 import { ProviderError } from './errors.js'
 import { parsePlanGraph } from '../intelligence/plan-graph.js'
 import { getTool } from '../tools/registry.js'
@@ -43,6 +43,49 @@ test('Workers AI 500 falls back to Groq and records provider use', async () => {
   assert.equal(result.fallbackUsed, true)
   assert.match(formatFallbackTrace(result.fallbackTrace), /Cloudflare Workers AI failed 500/)
   assert.match(formatFallbackTrace(result.fallbackTrace), /Groq fallback/)
+})
+
+test('OpenRouter 402 and Gemini 429 skip retries and use the next free providers', async () => {
+  const calls = []
+  const openrouter = mockProvider('openrouter', 'OpenRouter', () => {
+    calls.push('openrouter')
+    throw new ProviderError('Insufficient credits', {
+      provider: 'openrouter',
+      retryable: false,
+      upstreamStatus: 402,
+      status: 502,
+    })
+  })
+  const gemini = mockProvider('gemini', 'Google Gemini', () => {
+    calls.push('gemini')
+    throw new ProviderError('Quota exceeded', {
+      provider: 'gemini',
+      retryable: true,
+      upstreamStatus: 429,
+      status: 503,
+    })
+  })
+  const workersAi = mockProvider('workers_ai', 'Cloudflare Workers AI', () => {
+    calls.push('workers_ai')
+    return { text: 'Workers AI answer' }
+  })
+  const groq = mockProvider('groq', 'Groq', () => {
+    calls.push('groq')
+    return { text: 'Groq answer' }
+  })
+  const result = await invokeFallbackChain(mockRegistry([openrouter, gemini, workersAi, groq]), openrouter, [
+    { role: 'user', content: 'hello' },
+  ], { database: { query: async () => ({ rowCount: 1 }) } })
+
+  assert.deepEqual(calls, ['openrouter', 'gemini', 'workers_ai'])
+  assert.equal(result.provider.id, 'workers_ai')
+  assert.match(formatFallbackTrace(result.fallbackTrace), /OpenRouter free quota used/)
+  assert.match(formatFallbackTrace(result.fallbackTrace), /Google Gemini free quota used/)
+  assert.match(formatFallbackTrace(result.fallbackTrace), /tried Cloudflare Workers AI fallback/)
+  assert.doesNotMatch(formatFallbackTrace(result.fallbackTrace), /insufficient credits|add \$5/i)
+  assert.equal(freeQuotaFailureMessage('openrouter', 402), 'Free quota used, tried next fallback.')
+  assert.equal(freeQuotaFailureMessage('gemini', 429), 'Free quota used, tried next fallback.')
+  assert.equal(freeQuotaFailureMessage('groq', 402), null)
 })
 
 test('ordinary text retries do not force a JSON response', async () => {

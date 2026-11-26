@@ -52,6 +52,47 @@ test('compatible provider errors include sanitized upstream details', async () =
   }
 })
 
+test('OpenRouter retries its configured free model fallback but not quota failures', async () => {
+  const provider = createProviderRegistry({
+    OPENROUTER_API_KEY: 'sk-or-v1-test-secret',
+  }).get('openrouter')
+  const originalFetch = globalThis.fetch
+  const requests = []
+  globalThis.fetch = async (_url, options) => {
+    const body = JSON.parse(options.body)
+    requests.push(body.model)
+    if (requests.length === 1) {
+      return new Response(JSON.stringify({ error: { message: 'Model unavailable' } }), { status: 404 })
+    }
+    return new Response(JSON.stringify({ choices: [{ message: { content: 'Free model answer' } }] }))
+  }
+  try {
+    const result = await provider.generate({ messages: [{ role: 'user', content: 'hello' }] })
+    assert.deepEqual(requests, [
+      'meta-llama/llama-3.1-8b-instruct:free',
+      'google/gemma-3-27b-it:free',
+    ])
+    assert.equal(result.text, 'Free model answer')
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+
+  const quotaRequests = []
+  globalThis.fetch = async (_url, options) => {
+    quotaRequests.push(JSON.parse(options.body).model)
+    return new Response(JSON.stringify({ error: { message: 'Insufficient credits' } }), { status: 402 })
+  }
+  try {
+    await assert.rejects(provider.generate({ messages: [{ role: 'user', content: 'hello' }] }), (error) => {
+      assert.equal(error.upstreamStatus, 402)
+      return true
+    })
+    assert.deepEqual(quotaRequests, ['meta-llama/llama-3.1-8b-instruct:free'])
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
 test('Anthropic adapter translates common tool definitions and normalizes tool calls', async () => {
   const originalFetch = globalThis.fetch
   let request
@@ -111,8 +152,8 @@ test('configured AI workers call their URL directly without a key or model', asy
     ['worker1', true],
     ['worker2', true],
   ])
-  assert.equal(selectProvider(registry, { preferred: 'worker1' }).id, 'worker1')
-  assert.equal(selectProvider(registry, { preferred: 'worker2', exclude: ['worker1'] }).id, 'worker2')
+  assert.equal(selectProvider(registry, { preferred: 'worker1' }).id, 'local-fallback')
+  assert.equal(selectProvider(registry, { preferred: 'worker2', exclude: ['worker1'] }).id, 'local-fallback')
 
   const originalFetch = globalThis.fetch
   let request
@@ -180,20 +221,55 @@ test('AI worker availability depends only on its URL', () => {
   assert.equal(registry.list().find(({ id }) => id === 'worker2').available, false)
 })
 
-test('OpenRouter and Gemini use their dedicated environment model variables', () => {
+test('primary chain models stay on the configured free-tier model IDs', () => {
   const registry = createProviderRegistry({
     OPENROUTER_API_KEY: 'sk-or-v1-1234567890abcd',
     OPENROUTER_MODEL: 'anthropic/claude-sonnet-4',
     GEMINI_API_KEY: 'AIzaSy1234567890abcd',
-    GEMINI_MODEL: 'gemini-2.5-flash',
+    GEMINI_MODEL: 'gemini-pro',
+    CLOUDFLARE_ACCOUNT_ID: 'cloudflare-account',
+    CLOUDFLARE_API_TOKEN: 'cloudflare-secret-token',
+    CLOUDFLARE_AI_MODEL: '@cf/meta/llama-3.1-70b',
+    GROQ_API_KEY: 'gsk_test-secret-key',
+    AI_MODEL_GROQ: 'paid-groq-model',
   })
-  assert.equal(registry.get('openrouter').model, 'anthropic/claude-sonnet-4')
+  assert.equal(registry.get('openrouter').model, 'meta-llama/llama-3.1-8b-instruct:free')
+  assert.deepEqual(registry.get('openrouter').models, [
+    'meta-llama/llama-3.1-8b-instruct:free',
+    'google/gemma-3-27b-it:free',
+  ])
   assert.equal(registry.get('gemini').model, 'gemini-2.5-flash')
+  assert.equal(registry.get('workers_ai').model, '@cf/meta/llama-3.3-70b-instruct-fp8-fast')
+  assert.deepEqual(registry.get('workers_ai').models, [
+    '@cf/meta/llama-3.3-70b-instruct-fp8-fast',
+    '@cf/qwen/qwen2.5-coder-32b-instruct',
+  ])
+  assert.equal(registry.get('groq').model, 'llama-3.3-70b-versatile')
   const providers = registry.list()
   assert.equal(providers.find(({ id }) => id === 'openrouter').keySuffix, 'abcd')
   assert.equal(providers.find(({ id }) => id === 'gemini').keySuffix, 'abcd')
   assert.equal(JSON.stringify(providers).includes('sk-or-v1'), false)
   assert.equal(JSON.stringify(providers).includes('AIzaSy'), false)
+})
+
+test('provider selector respects the configured fallback order', () => {
+  const primaryRegistry = createProviderRegistry({
+    OPENROUTER_API_KEY: 'sk-or-v1-test-secret',
+    GEMINI_API_KEY: 'AIzaSy1234567890abcd',
+    CLOUDFLARE_ACCOUNT_ID: 'cloudflare-account',
+    CLOUDFLARE_API_TOKEN: 'cloudflare-secret-token',
+    GROQ_API_KEY: 'gsk_test-secret-key',
+  })
+  assert.equal(selectProvider(primaryRegistry, { preferred: 'gemini' }).id, 'openrouter')
+
+  const registry = createProviderRegistry({
+    GEMINI_API_KEY: 'AIzaSy1234567890abcd',
+    CLOUDFLARE_ACCOUNT_ID: 'cloudflare-account',
+    CLOUDFLARE_API_TOKEN: 'cloudflare-secret-token',
+    GROQ_API_KEY: 'gsk_test-secret-key',
+  })
+
+  assert.equal(selectProvider(registry).id, 'gemini')
 })
 
 test('Workers AI and Groq are available using only their server environment configuration', () => {

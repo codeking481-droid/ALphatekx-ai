@@ -69,6 +69,7 @@ import {
   saveUserApiKey,
   withUserProviderRegistry,
 } from '../settings/byok.js'
+import { freeQuotaFailureMessage } from '../providers/fallback-chain.js'
 
 const app = express()
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_FILE_BYTES, files: 1 } })
@@ -286,7 +287,7 @@ app.get('/api/providers', requireUser, async (req, res, next) => {
 
 app.post('/api/providers/:providerId/test', requireUser, async (req, res, next) => {
   try {
-    if (!['workers_ai', 'groq'].includes(req.params.providerId)) {
+    if (!['openrouter', 'gemini', 'workers_ai', 'groq'].includes(req.params.providerId)) {
       return res.status(404).json({ error: 'AI provider was not found.' })
     }
     const result = await withUserProviderRegistry({
@@ -330,7 +331,8 @@ app.post('/api/providers/:providerId/test', requireUser, async (req, res, next) 
             provider: provider.id,
             status: 'failed',
             upstreamStatus: error.upstreamStatus || null,
-            error: error.message || 'The provider test failed.',
+            error: freeQuotaFailureMessage(provider.id, error.upstreamStatus) ||
+              error.message || 'The provider test failed.',
           },
         }
       }

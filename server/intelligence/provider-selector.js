@@ -9,13 +9,15 @@ export function selectProvider(registry, {
   const allProviders = registry.list()
   const hasPrimaryChain = allProviders.some((provider) => FALLBACK_PROVIDER_IDS.includes(provider.id))
   const candidates = allProviders
-    .filter((provider) => !hasPrimaryChain || FALLBACK_PROVIDER_IDS.includes(provider.id) || provider.id === preferred)
+    .filter((provider) => !hasPrimaryChain || FALLBACK_PROVIDER_IDS.includes(provider.id))
     .filter((provider) => provider.available && provider.capabilities?.[capability] && !exclude.includes(provider.id))
-  if (preferred) {
+  if (!hasPrimaryChain && preferred) {
     const selected = candidates.find((provider) => provider.id === preferred)
     if (selected) return registry.get(selected.id)
   }
-  const selected = candidates.sort((left, right) => providerScore(right) - providerScore(left))[0]
+  const selected = hasPrimaryChain
+    ? FALLBACK_PROVIDER_IDS.map((id) => candidates.find((provider) => provider.id === id)).find(Boolean)
+    : candidates.sort((left, right) => providerScore(right) - providerScore(left))[0]
   if (!selected) return localFallbackProvider
   return registry.get(selected.id)
 }
