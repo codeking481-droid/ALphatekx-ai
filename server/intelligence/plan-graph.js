@@ -1,6 +1,5 @@
 import { getTool, listTools } from '../tools/registry.js'
 import { validateJsonSchema } from '../tools/schema-validation.js'
-import { createBuiltInMotionInput } from '../tools/motion-graphics.js'
 
 const TASK_TYPES = ['research', 'analysis', 'drafting', 'calculation', 'review', 'tool', 'decision']
 const CAPABILITIES = ['reasoning', 'research', 'writing', 'calculation', 'review', 'tool_execution']
@@ -319,16 +318,12 @@ export function createFallbackToolPlan({
   message,
   allowedToolIds = null,
   skill = null,
-  fallbackReason = 'invalid-ai-output',
 } = {}) {
   const toolId = inferToolIdFromRequest(message, allowedToolIds, skill) ||
     (allowedToolIds?.length === 1 && allowedToolIds[0] === 'motion_graphics_create'
       ? 'motion_graphics_create'
       : null)
-  if (!toolId) return null
-  const toolInput = toolId === 'motion_graphics_create'
-    ? createBuiltInMotionInput(message, fallbackReason)
-    : undefined
+  if (!toolId || toolId === 'motion_graphics_create') return null
   return {
     tasks: [normalizeToolTask({
       id: 'tool-task-1',
@@ -343,7 +338,6 @@ export function createFallbackToolPlan({
       specialistRole: 'execution',
       maxAttempts: 1,
       completionConditions: ['Result submitted for approval.'],
-      ...(toolInput ? { toolInput } : {}),
     }, { message, skill, allowedToolIds, requiresExternalAction: true })],
   }
 }

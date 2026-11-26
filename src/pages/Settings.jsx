@@ -252,7 +252,7 @@ export default function Settings() {
         {settingsError && <p className="mt-3 text-[12.5px] text-destructive">{settingsError}</p>}
       </Section>
 
-      <Section title="AI provider" description="Fallback chain: Groq → Workers AI → OpenRouter → Gemini → configured AI Worker 1 → local template.">
+      <Section title="AI provider" description="Fallback chain: Groq → Workers AI → OpenRouter → Gemini → configured AI Worker 1 → local text response.">
         <div className="max-w-xl space-y-3">
           {AI_PROVIDER_ORDER.map(({ id, label }) => {
             const provider = aiProviders.find((item) => item.id === id);
@@ -332,7 +332,7 @@ export default function Settings() {
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
                 <p className="text-[13px] font-medium">Fallback 5: Local</p>
-                <p className="mt-1 text-[11px] text-muted-foreground">Deterministic templates · Always Ready</p>
+                <p className="mt-1 text-[11px] text-muted-foreground">Local text responses · Always Ready</p>
               </div>
               <span className="text-[11.5px] font-medium text-emerald-600">Always Ready</span>
             </div>

@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { deflateRawSync } from 'node:zlib'
 import { extractSkillMarkdown, extractSkillUpload } from './archive.js'
+import { normalizeSkillUpload, parseSkillMarkdown } from './loader.js'
 
 test('skill uploads accept a single Markdown file and derive a fallback name', () => {
   const markdown = Buffer.from('---\nname: sample\n---\nbody')
@@ -18,14 +19,22 @@ test('Claude-style ZIPs retain supporting files as inert content', () => {
     { name: 'claude-skill/SKILL.md', content: markdown },
     { name: 'claude-skill/scripts/setup.py', content: Buffer.from('print("ignored")') },
     { name: 'claude-skill/references/guide.md', content: Buffer.from('ignored reference') },
+    { name: 'claude-skill/assets/logo.svg', content: Buffer.from('<svg></svg>') },
   ])
   const result = extractSkillUpload({ originalname: 'claude-skill.zip', buffer: archive })
   assert.equal(result.markdown, markdown.toString())
   assert.equal(result.fallbackName, 'claude-skill')
   assert.deepEqual(result.ignoredFiles, [])
   assert.equal(result.ignoredFileCount, 0)
-  assert.deepEqual(result.supportingFiles.map(({ path }) => path), ['scripts/setup.py', 'references/guide.md'])
+  assert.deepEqual(result.supportingFiles.map(({ path }) => path), [
+    'scripts/setup.py',
+    'references/guide.md',
+    'assets/logo.svg',
+  ])
   assert.equal(result.supportingFiles[0].content.toString(), 'print("ignored")')
+  const parsed = parseSkillMarkdown(normalizeSkillUpload(result.markdown, result.fallbackName))
+  assert.equal(parsed.name, 'sample')
+  assert.equal(parsed.version, '1.0.0')
 })
 
 test('ZIP uploads locate SKILL.md nested in multiple folders', () => {

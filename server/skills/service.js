@@ -13,7 +13,11 @@ import {
 
 export async function listSkills({ userId, database = pool, skillsDir = config.skillsDir }) {
   const skills = await getAvailableSkills({ userId, database, skillsDir })
-  return skills.map(({ markdown, body, sourcePath, ...skill }) => skill)
+  return skills.map(({ markdown, body, sourcePath, ...skill }) => ({
+    ...skill,
+    markdownPreview: markdown.slice(0, 8000),
+    markdownPreviewTruncated: markdown.length > 8000,
+  }))
 }
 
 export async function installSkill({

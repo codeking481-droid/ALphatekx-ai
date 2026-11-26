@@ -3,7 +3,6 @@ import assert from 'node:assert/strict'
 import { buildPlanMessages, createFallbackToolPlan, parsePlanGraph } from '../intelligence/plan-graph.js'
 import { getTool } from './registry.js'
 import {
-  createBuiltInMotionInput,
   isSafeMotionHtml,
   registerMotionGraphicsTool,
 } from './motion-graphics.js'
@@ -68,32 +67,61 @@ test('motion plans reject missing or unsafe generated HTML rather than silently 
       html: '<!doctype html><html><head></head><body><script>document.body.dataset.ready = "true"</script></body></html>',
     }, { message: 'Make an intro for Biz.' })
     assert.equal(tool.validate(inlineScriptInput), true)
-
-    const fallback = createBuiltInMotionInput('Make an intro for Biz.')
-    assert.equal(isSafeMotionHtml(fallback.html), true)
-    assert.match(fallback.html, /BIZ_BUILT_IN_MOTION_TEMPLATE:providers-unavailable/)
-    assert.match(fallback.html, /<h1>Biz<\/h1>/)
-    assert.match(fallback.html, /prefers-reduced-motion/)
   } finally {
     unregister()
   }
 })
 
-test('local fallback plans mark their motion artifact as a built-in template', () => {
+test('a provider-generated motion plan can still call the motion graphics tool', () => {
   const unregister = registerMotionGraphicsTool()
   try {
-    const graph = createFallbackToolPlan({
+    const generatedHtml = '<!doctype html><html><head><style>body { background: #6320ee; }</style></head><body><h1>Coffee launch</h1></body></html>'
+    const graph = parsePlanGraph(JSON.stringify({
+      tasks: [{
+        id: 'make-intro',
+        description: 'Create a coffee launch animation.',
+        type: 'tool',
+        requiredInputs: [{
+          kind: 'tool_output',
+          description: 'Generated animation file.',
+          toolId: 'motion_graphics_create',
+        }],
+        dependencies: [],
+        expectedOutput: 'A downloadable AI-generated animation.',
+        acceptanceCriteria: ['The prompt-specific animation file is available.'],
+        riskClassification: 'low',
+        requiredCapability: 'tool_execution',
+        specialistRole: 'execution',
+        maxAttempts: 1,
+        completionConditions: ['The animation file is available.'],
+        toolInput: { filename: 'coffee-launch.html', html: generatedHtml },
+      }],
+    }), {
+      allowedToolIds: ['motion_graphics_create'],
+      requiresExternalAction: false,
+      message: 'Create a motion graphics intro for a coffee brand.',
+    })
+
+    assert.equal(graph.tasks[0].type, 'tool')
+    assert.equal(graph.tasks[0].requiredInputs[0].toolId, 'motion_graphics_create')
+    assert.equal(graph.tasks[0].toolInput.html, generatedHtml)
+  } finally {
+    unregister()
+  }
+})
+
+test('local fallback cannot fabricate or submit a motion graphic', () => {
+  const unregister = registerMotionGraphicsTool()
+  try {
+    assert.equal(createFallbackToolPlan({
       message: 'Make a motion graphics intro for Biz.',
       allowedToolIds: ['motion_graphics_create'],
-    })
-    assert.equal(isSafeMotionHtml(graph.tasks[0].toolInput.html), true)
-    assert.match(graph.tasks[0].toolInput.html, /BIZ_BUILT_IN_MOTION_TEMPLATE:invalid-ai-output/)
+    }), null)
 
-    const regenerated = createFallbackToolPlan({
+    assert.equal(createFallbackToolPlan({
       message: 'Make it different',
       allowedToolIds: ['motion_graphics_create'],
-    })
-    assert.equal(isSafeMotionHtml(regenerated.tasks[0].toolInput.html), true)
+    }), null)
   } finally {
     unregister()
   }

@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Check, Copy, Download, FileText } from "lucide-react";
+import { Check, Copy, Download, FileText, Sparkles } from "lucide-react";
 import Markdown from "@/components/chat/Markdown";
 
 function displayContent(content) {
@@ -31,6 +31,7 @@ export default function MessageItem({ message }) {
   const isUser = message.role === "user";
   const attachments = message.attachments || [];
   const content = isUser ? message.content || "" : displayContent(message.content);
+  const usedSkill = !isUser && typeof message.skill?.name === "string" ? message.skill.name : null;
   const motionGraphicId = !isUser
     ? content.match(/\/api\/files\/([a-f0-9-]{36})\/preview/i)?.[1]
     : null;
@@ -73,6 +74,12 @@ export default function MessageItem({ message }) {
           <p className="mb-2 text-[10px] text-muted-foreground">
             Using memories: {message.memoriesUsed.map((memory) => memory.content).join("; ")}
           </p>
+        )}
+        {usedSkill && (
+          <span className="mb-2 inline-flex items-center gap-1.5 rounded-full border border-primary/20 bg-primary/[0.06] px-2.5 py-1 text-[11px] font-medium text-primary">
+            <Sparkles className="h-3 w-3" strokeWidth={1.8} />
+            Used skill: {usedSkill}
+          </span>
         )}
         <Markdown content={content} enableCodePreview />
         {motionGraphicId && (

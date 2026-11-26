@@ -26,7 +26,7 @@ Use when the user asks for an animated intro, logo animation, animated text, mot
 
 Use the subject and details the user provided. If optional style, timing, or layout preferences are missing, choose polished defaults and create a first draft instead of asking. For a Biz intro without a specified title, use "Biz".
 
-If AI providers are unavailable or cannot return safe, usable HTML, the built-in template is a last resort only. The tool result marks it as a built-in template, not AI-generated, and the chat must say so.
+If AI providers are unavailable or cannot return safe, usable HTML, do not create or return a substitute template. Tell the user no animation file was generated and include the provider failure details available in the chat.
 
 ## What not to do
 

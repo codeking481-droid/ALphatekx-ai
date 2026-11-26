@@ -16,10 +16,3 @@ export function isMotionGraphicsRequest(message, history = []) {
   return (MOTION_GRAPHICS_TERMS.test(message) && CREATION_ACTIONS.test(message)) ||
     isMotionGraphicsRegeneration(message, history)
 }
-
-export function builtInMotionGraphicsReply(artifact) {
-  const disclosure = artifact?.fallbackReason === 'invalid-ai-output'
-    ? 'AI providers did not return safe, usable animation HTML, so this is a built-in template, not AI-generated. Retry in 2 mins for real AI generation.'
-    : 'AI providers were down, so this is a built-in template, not AI-generated. Retry in 2 mins for real AI generation.'
-  return `${disclosure}\n\n[Preview the animation](${artifact.previewUrl}) · [Download the HTML](${artifact.url})`
-}

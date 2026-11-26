@@ -212,10 +212,22 @@ export default function Skills() {
                     ))}
                   </div>
                   <div className="mt-3 flex flex-wrap gap-1.5">
+                    <span className="mr-1 self-center text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Tools</span>
                     {skill.tools.length
                       ? skill.tools.map((tool) => <span key={tool} className="rounded-md bg-muted/70 px-2 py-1 font-mono text-[10px] text-muted-foreground">{tool}</span>)
-                      : <span className="rounded-md bg-muted/70 px-2 py-1 text-[10px] text-muted-foreground">No tool access</span>}
+                      : <span className="rounded-md bg-muted/70 px-2 py-1 text-[10px] text-muted-foreground">Selected from available tools when needed</span>}
                   </div>
+                  {skill.markdownPreview && (
+                    <details className="mt-3 rounded-lg border border-border/70 bg-background/50">
+                      <summary className="cursor-pointer px-3 py-2 text-xs font-medium text-foreground/80">
+                        Preview SKILL.md
+                      </summary>
+                      <pre className="max-h-64 overflow-auto whitespace-pre-wrap border-t border-border/70 px-3 py-2.5 font-mono text-[11px] leading-5 text-muted-foreground">
+                        {skill.markdownPreview}
+                        {skill.markdownPreviewTruncated ? "\n\n[Preview truncated]" : ""}
+                      </pre>
+                    </details>
+                  )}
                   {skill.dangerous && (
                     <p className="mt-3 flex items-center gap-1.5 text-xs text-amber-700 dark:text-amber-400">
                       <ShieldCheck className="h-3.5 w-3.5" /> Skills requesting protected tools require approval to install or enable.

@@ -467,6 +467,34 @@ test('clear requests use ObjectiveSpec and skip planning and research', async ()
   assert.equal(database.state.commits, 1)
 })
 
+test('motion graphics are not fabricated when every AI provider is unavailable', async () => {
+  const database = createDatabase()
+  const ids = ['groq', 'workers_ai', 'openrouter', 'gemini', 'worker1']
+  const handlers = Object.fromEntries(ids.map((id) => [id, {
+    understanding: () => {
+      throw new ProviderError('Provider unavailable', {
+        provider: id,
+        status: 503,
+        upstreamStatus: 429,
+        retryable: true,
+      })
+    },
+  }]))
+  const { registry, calls } = createRegistry({ ids, handlers })
+
+  const result = await request({
+    database,
+    registry,
+    message: 'Create a motion graphics intro for a coffee brand.',
+  })
+
+  assert.match(result.reply, /No animation file or template was created/)
+  assert.doesNotMatch(result.reply, /\/api\/files\//)
+  assert.deepEqual(calls.map(({ stage }) => stage), ['understanding', 'understanding', 'understanding', 'understanding', 'understanding'])
+  assert.equal(database.state.toolExecutions.length, 0)
+  assert.equal(database.state.approvals.length, 0)
+})
+
 test('capability questions receive the registered tool list without planning an action', async () => {
   const database = createDatabase()
   const { registry, calls } = createRegistry()
@@ -483,7 +511,7 @@ test('capability questions receive the registered tool list without planning an 
     content.includes('describe only capabilities in the currently registered tools')))
 })
 
-test('a matched skill is loaded before planning and its tool allowlist and badge are preserved', async () => {
+test('a matched skill is loaded before planning and available tools remain approval-gated', async () => {
   const database = createDatabase()
   const { registry, calls } = createRegistry({
     handlers: {
@@ -516,10 +544,85 @@ test('a matched skill is loaded before planning and its tool allowlist and badge
   const planningCall = calls.find(({ stage }) => stage === 'planning')
   assert.ok(planningCall.messages.some(({ content }) => content.includes('Matched optional skill example-sell-skinsnap@1.0.0')))
   assert.match(planningCall.messages[0].content, /"id":"web_search"/)
-  assert.doesNotMatch(planningCall.messages[0].content, /"id":"file_write"/)
+  assert.match(planningCall.messages[0].content, /"id":"motion_graphics_create"/)
+  assert.match(planningCall.messages[0].content, /"id":"file_write"/)
+  assert.match(planningCall.messages[0].content, /"requiresApproval":true/)
   assert.deepEqual(result.skill, { name: 'example-sell-skinsnap', version: '1.0.0' })
   assert.deepEqual(database.state.persistedMessages[1].metadata.skill, result.skill)
   assert.ok(database.state.auditEvents.some(([userId, event]) => userId === USER_ID && event === 'skill.used'))
+})
+
+test('matched Skill instructions and supporting context guide the generated reply', async () => {
+  const database = createDatabase()
+  const skill = {
+    name: 'birthday-card',
+    description: 'Create personalized birthday card HTML.',
+    keywords: ['birthday', 'greeting card'],
+    creates: ['file', 'animation'],
+    version: '1.0.0',
+    body: 'Use the recipient name and create an original pink birthday card with balloons.',
+    tools: ['motion_graphics_create'],
+    supportingFiles: {
+      references: [{ path: 'references/brand.md', content: 'Use soft pink and warm gold.' }],
+      assets: [{ path: 'assets/logo.svg', size: 12, encoding: 'text', content: '<svg>Precious</svg>' }],
+      scripts: ['scripts/build.js'],
+    },
+    enabled: true,
+  }
+  const html = '<!doctype html><html><body>Happy birthday, Precious!</body></html>'
+  const { registry, calls } = createRegistry({
+    handlers: {
+      'mock-primary': {
+        synthesis: ({ messages }) => {
+          const skillContext = messages.find(({ content }) => content.includes('Matched optional skill birthday-card@1.0.0'))
+          assert.ok(skillContext)
+          assert.ok(skillContext.content.includes('Suggested tools: motion_graphics_create'))
+          assert.ok(skillContext.content.includes(skill.body))
+          assert.ok(skillContext.content.includes('Use soft pink and warm gold.'))
+          assert.ok(skillContext.content.includes('<svg>Precious</svg>'))
+          assert.ok(skillContext.content.includes('scripts/build.js'))
+          assert.doesNotMatch(skillContext.content, /execute uploaded scripts/i)
+          return { text: html }
+        },
+      },
+    },
+  })
+
+  const result = await request({
+    database,
+    registry,
+    message: 'Make a birthday card for Precious, pink, with balloons.',
+    skillResolver: async () => [skill],
+  })
+
+  assert.ok(calls.some(({ stage }) => stage === 'synthesis'))
+  assert.equal(result.reply, html)
+  assert.deepEqual(result.skill, { name: skill.name, version: skill.version })
+  assert.deepEqual(database.state.persistedMessages[1].metadata.skill, result.skill)
+})
+
+test('an unmatched request uses normal chat without injecting an unrelated Skill', async () => {
+  const database = createDatabase()
+  const { registry, calls } = createRegistry()
+  const result = await request({
+    database,
+    registry,
+    message: 'What is the weather in London?',
+    skillResolver: async () => [{
+      name: 'birthday-card',
+      description: 'Create a personalized birthday card as HTML.',
+      keywords: ['birthday', 'greeting card'],
+      version: '1.0.0',
+      body: 'Create birthday cards.',
+      tools: ['motion_graphics_create'],
+      enabled: true,
+    }],
+  })
+
+  assert.equal(result.skill, null)
+  assert.ok(calls.some(({ stage }) => stage === 'synthesis'))
+  assert.equal(calls.some(({ messages }) => messages.some(({ content }) =>
+    content.includes('Matched optional skill birthday-card@1.0.0'))), false)
 })
 
 test('unmatched requests can use per-user MCP tools without needing a Skill', async () => {

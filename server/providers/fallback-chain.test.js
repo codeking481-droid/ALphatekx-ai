@@ -4,7 +4,6 @@ import { invokeFallbackChain, formatFallbackTrace, freeQuotaFailureMessage } fro
 import { ProviderError } from './errors.js'
 import { parsePlanGraph } from '../intelligence/plan-graph.js'
 import { getTool } from '../tools/registry.js'
-import { registerMotionGraphicsTool, isSafeMotionHtml } from '../tools/motion-graphics.js'
 import { registerLinkedInTools } from '../linkedin/tools.js'
 
 function mockProvider(id, name, generate) {
@@ -194,7 +193,7 @@ test('provider quota failures skip retries and advance in the configured free-ti
   assert.equal(freeQuotaFailureMessage('groq', 402), null)
 })
 
-test('configured AI Worker 1 is tried after Gemini and before the local template', async () => {
+test('configured AI Worker 1 is tried after Gemini and before the local response', async () => {
   const calls = []
   const failed = (id, name, status) => mockProvider(id, name, () => {
     calls.push(id)
@@ -258,7 +257,7 @@ test('ordinary text retries do not force a JSON response', async () => {
   assert.doesNotMatch(requests[1][0].content, /ONLY valid JSON/)
 })
 
-test('Workers AI and Groq down use Local template', async () => {
+test('Workers AI and Groq down returns no fabricated motion graphic', async () => {
   const workersAi = mockProvider('workers_ai', 'Cloudflare Workers AI', () => {
     throw new ProviderError('Unavailable', { provider: 'workers_ai', retryable: true, upstreamStatus: 500, status: 503 })
   })
@@ -270,11 +269,12 @@ test('Workers AI and Groq down use Local template', async () => {
   ], { database: { query: async () => ({ rowCount: 1 }) } })
 
   assert.equal(result.provider.id, 'local-fallback')
-  assert.match(result.result.text, /motion graphics intro for Biz/)
+  assert.match(result.result.text, /couldn’t generate this motion graphic/)
+  assert.doesNotMatch(result.result.text, /Preview the animation|Download the HTML/)
   assert.equal(result.fallbackUsed, true)
 })
 
-test('no provider keys configured still selects the Local template instead of failing', async () => {
+test('no provider keys configured still returns a local response instead of crashing', async () => {
   const registry = mockRegistry([])
   const result = await invokeFallbackChain(registry, null, [
     { role: 'user', content: 'Help me draft a reply' },
@@ -295,28 +295,20 @@ test('local fallback builds a structured ObjectiveSpec for animation requests', 
   assert.equal(objective.requiresExternalAction, false)
 })
 
-test('local fallback builds a motion graphics tool plan for deterministic HTML creation', async () => {
-  const unregister = registerMotionGraphicsTool()
-  try {
-    const result = await invokeFallbackChain(mockRegistry([]), null, [
-      { role: 'system', content: 'Return a valid PlanGraph. Available tool: motion_graphics_create.' },
-      { role: 'user', content: 'Make a motion graphics intro for Biz' },
-    ], { database: { query: async () => ({ rowCount: 1 }) } })
+test('local fallback does not fabricate a motion graphics tool plan', async () => {
+  const result = await invokeFallbackChain(mockRegistry([]), null, [
+    { role: 'system', content: 'Return a valid PlanGraph. Available tool: motion_graphics_create.' },
+    { role: 'user', content: 'Make a motion graphics intro for Biz' },
+  ], { database: { query: async () => ({ rowCount: 1 }) } })
 
-    const graph = parsePlanGraph(result.result.text, {
-      allowedToolIds: ['motion_graphics_create'],
-      requiresExternalAction: false,
-      message: 'Make a motion graphics intro for Biz',
-    })
-    assert.equal(graph.tasks[0].requiredInputs[0].toolId, 'motion_graphics_create')
-    assert.equal(isSafeMotionHtml(graph.tasks[0].toolInput.html), true)
-    assert.match(graph.tasks[0].toolInput.html, /BIZ_BUILT_IN_MOTION_TEMPLATE:providers-unavailable/)
-    assert.match(graph.tasks[0].toolInput.html, /BIZ/)
-    assert.match(graph.tasks[0].toolInput.html, /Chat Connect Automate/)
-    assert.equal(getTool('motion_graphics_create').validate(graph.tasks[0].toolInput), true)
-  } finally {
-    unregister()
-  }
+  const graph = parsePlanGraph(result.result.text, {
+    allowedToolIds: ['motion_graphics_create'],
+    requiresExternalAction: false,
+    message: 'Make a motion graphics intro for Biz',
+  })
+  assert.equal(graph.tasks[0].type, 'analysis')
+  assert.equal(graph.tasks[0].requiredInputs.some((input) => input.kind === 'tool_output'), false)
+  assert.equal(graph.tasks[0].toolInput, undefined)
 })
 
 test('local fallback builds a LinkedIn approval plan using the supplied draft text', async () => {
@@ -380,7 +372,7 @@ test('local fallback responds naturally to a greeting', async () => {
   assert.equal(result.result.text, 'Hi! What can I help you with?')
 })
 
-test('provider failures return a useful local fallback', async () => {
+test('provider failures refuse to fabricate a motion graphic', async () => {
   const down = (id, name) => mockProvider(id, name, () => {
     throw new ProviderError('Unavailable', { provider: id, retryable: true, upstreamStatus: 503, status: 503 })
   })
@@ -391,8 +383,10 @@ test('provider failures return a useful local fallback', async () => {
   ], { database: { query: async () => ({ rowCount: 1 }) } })
 
   assert.equal(result.provider.id, 'local-fallback')
-  assert.match(result.result.text, /motion graphics intro for Biz/)
-  assert.match(formatFallbackTrace(result.fallbackTrace), /local fallback/)
+  assert.match(result.result.text, /couldn’t generate this motion graphic/)
+  assert.match(result.result.text, /No animation file or template was created/)
+  assert.doesNotMatch(result.result.text, /Preview the animation|Download the HTML/)
+  assert.match(formatFallbackTrace(result.fallbackTrace), /local fallback response/)
 })
 
 test('invalid JSON retries once with a short-only JSON prompt, then falls back', async () => {

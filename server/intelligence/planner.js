@@ -80,7 +80,7 @@ export async function createPlanGraph(registry, provider, {
       })
     } catch (repairError) {
       const fallback = requiresExternalAction
-        ? createFallbackToolPlan({ message, allowedToolIds, skill, fallbackReason: 'invalid-ai-output' })
+        ? createFallbackToolPlan({ message, allowedToolIds, skill })
         : null
       if (!fallback) throw repairError
       planGraph = parsePlanGraph(JSON.stringify(fallback), {

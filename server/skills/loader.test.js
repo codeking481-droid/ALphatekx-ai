@@ -49,6 +49,29 @@ test('skill matching chooses the strongest enabled description match and ignores
   assert.equal(matchSkill('Sell SkinSnap to UK companies', skills.map((skill) => ({ ...skill, enabled: false }))), null)
 })
 
+test('skill matching uses keywords and intent to choose the right birthday-card skill', () => {
+  const skills = [
+    {
+      name: 'party-invitation',
+      description: 'Design invitations for celebrations.',
+      keywords: ['party', 'invitation'],
+      enabled: true,
+    },
+    {
+      name: 'birthday-card',
+      description: 'Create a personalized birthday card as HTML.',
+      keywords: ['birthday', 'greeting card', 'balloons'],
+      body: 'Make a colorful card with the recipient name and celebratory animation.',
+      enabled: true,
+    },
+  ]
+  assert.equal(
+    matchSkill('Make a birthday card for Precious, pink, with balloons', skills)?.name,
+    'birthday-card',
+  )
+  assert.equal(matchSkill('What is the weather in London?', skills), null)
+})
+
 test('a skill can only declare available tools and no-skill fallback excludes skill management tools', () => {
   const markdown = `---
 name: invalid-shell
@@ -101,6 +124,21 @@ Use the provided instructions to answer research questions.
   assert.equal(skill.version, '1.0.0')
   assert.deepEqual(new Set(skill.tools), new Set(['web_search', 'file_read', 'file_list']))
   assert.equal(skill.body.startsWith('# Research carefully'), true)
+})
+
+test('uploaded keywords are retained and relevant file-creation tools are suggested', () => {
+  const markdown = `---
+name: birthday-card
+description: Make a personalized birthday card as HTML.
+keywords:
+  - birthday
+  - greeting card
+---
+Create a fresh birthday card for the recipient.
+`
+  const skill = parseSkillMarkdown(normalizeSkillUpload(markdown, 'birthday-card'))
+  assert.deepEqual(skill.keywords, ['birthday', 'greeting card'])
+  assert.ok(skill.tools.includes('motion_graphics_create'))
 })
 
 test('missing or malformed upload frontmatter gets filename and first-line defaults', () => {
