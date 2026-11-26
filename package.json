@@ -15,7 +15,7 @@
     "lint": "eslint . --quiet",
     "lint:fix": "eslint . --fix",
     "typecheck": "tsc -p ./jsconfig.json",
-    "test": "node --test server/**/*.test.js",
+    "test": "node --test server/**/*.test.js src/**/*.test.js",
     "benchmark": "node server/intelligence/benchmarks/run.js --mode fixtures",
     "benchmark:intelligence": "node server/intelligence/benchmarks/run.js --mode fixtures",
     "benchmark:intelligence:real": "node server/intelligence/benchmarks/run.js --mode real",

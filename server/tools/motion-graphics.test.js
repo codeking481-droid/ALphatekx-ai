@@ -8,7 +8,7 @@ import {
   registerMotionGraphicsTool,
 } from './motion-graphics.js'
 
-test('motion graphic output permits inert CSS animation and rejects active or external content', () => {
+test('motion graphic output permits isolated inline animation scripts and rejects unsafe external content', () => {
   const unregister = registerMotionGraphicsTool()
   try {
     const tool = getTool('motion_graphics_create')
@@ -16,7 +16,11 @@ test('motion graphic output permits inert CSS animation and rejects active or ex
     assert.equal(isSafeMotionHtml(safeHtml), true)
     assert.equal(tool.validate({ filename: 'biz-intro.html', html: safeHtml }), true)
     assert.equal(tool.normalizeInput({ filename: 'biz-intro.html', html: safeHtml }).html, safeHtml)
-    assert.equal(isSafeMotionHtml(safeHtml.replace('</body>', '<script>alert(1)</script></body>')), false)
+    const inlineScriptHtml = safeHtml.replace('</body>', '<script>document.body.dataset.ready = "true"</script></body>')
+    assert.equal(isSafeMotionHtml(inlineScriptHtml), true)
+    assert.equal(tool.validate({ filename: 'biz-intro.html', html: inlineScriptHtml }), true)
+    assert.equal(isSafeMotionHtml(safeHtml.replace('</body>', '<script src="/app.js"></script></body>')), false)
+    assert.equal(isSafeMotionHtml(safeHtml.replace('</body>', '<img src=x onerror=alert(1)></body>')), false)
     assert.equal(isSafeMotionHtml(safeHtml.replace('</body>', '<img src=https://example.com/a.png></body>')), false)
     assert.equal(tool.validate({ filename: '../biz.html', html: safeHtml }), false)
   } finally {
@@ -60,10 +64,10 @@ test('motion plans reject missing or unsafe generated HTML rather than silently 
     assert.equal(emptyInput.html, '')
     assert.equal(tool.validate(emptyInput), false)
 
-    const unsafeInput = tool.normalizeInput({
-      html: '<!doctype html><html><head></head><body><script>alert(1)</script></body></html>',
+    const inlineScriptInput = tool.normalizeInput({
+      html: '<!doctype html><html><head></head><body><script>document.body.dataset.ready = "true"</script></body></html>',
     }, { message: 'Make an intro for Biz.' })
-    assert.equal(tool.validate(unsafeInput), false)
+    assert.equal(tool.validate(inlineScriptInput), true)
 
     const fallback = createBuiltInMotionInput('Make an intro for Biz.')
     assert.equal(isSafeMotionHtml(fallback.html), true)
@@ -105,7 +109,8 @@ test('motion planning explicitly requests prompt-specific, distinct HTML and CSS
     })
     assert.match(system.content, /original HTML document/)
     assert.match(system.content, /clearly different design/)
-    assert.match(system.content, /scripts, event handlers, and remote resources are not allowed/)
+    assert.match(system.content, /inline JavaScript is allowed only for local animation or interaction/)
+    assert.match(system.content, /Do not use event-handler attributes/)
   } finally {
     unregister()
   }

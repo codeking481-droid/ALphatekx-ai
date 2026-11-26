@@ -19,7 +19,7 @@ Use when the user asks for an animated intro, logo animation, animated text, mot
 
 1. Generate a new, self-contained HTML document whose composition, colors, visible text, shapes, and CSS keyframe motion specifically match the user's brief. Do not reuse a previous animation or a generic Biz template.
 2. Keep the visual responsive, readable, and accessible, with a reduced-motion fallback. Use Emerald and Charcoal only when they fit the request or as the default palette.
-3. Use inline CSS only. Scripts, event handlers, remote resources, and embedded external content are prohibited.
+3. Use inline CSS and, only when needed for the requested interaction, inline JavaScript. Never use event-handler attributes, external scripts, network requests, workers, remote resources, or embedded external content.
 4. For "make it different" or "make another one," use the earlier brief as context and deliberately change the visual direction.
 5. Call `motion_graphics_create` with the complete HTML and a short `.html` filename.
 6. Tell the user the motion graphic is ready; include its preview and download links.
@@ -30,4 +30,4 @@ If AI providers are unavailable or cannot return safe, usable HTML, the built-in
 
 ## What not to do
 
-Never execute uploaded or generated scripts. Do not claim that a video or GIF was created; this skill produces a standalone HTML animation.
+Never execute uploaded or generated scripts on the server. Generated inline scripts run only when the user explicitly opens the isolated browser preview; preview network access is blocked. Do not claim that a video or GIF was created; this skill produces a standalone HTML animation.

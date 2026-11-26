@@ -74,13 +74,13 @@ export default function MessageItem({ message }) {
             Using memories: {message.memoriesUsed.map((memory) => memory.content).join("; ")}
           </p>
         )}
-        <Markdown content={content} />
+        <Markdown content={content} enableCodePreview />
         {motionGraphicId && (
           <div className="mt-4 overflow-hidden rounded-xl border border-border/70 bg-card/60">
             <iframe
               title="Motion graphic preview"
               src={`/api/files/${motionGraphicId}/preview`}
-              sandbox=""
+              sandbox="allow-scripts"
               loading="lazy"
               className="h-64 w-full bg-white"
             />

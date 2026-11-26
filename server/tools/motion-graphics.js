@@ -3,7 +3,7 @@ import { saveUpload } from '../files/service.js'
 import { registerTool } from './registry.js'
 
 export const MAX_MOTION_HTML_BYTES = 256 * 1024
-const MOTION_GRAPHIC_CSP = "default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:; base-uri 'none'; form-action 'none'"
+const MOTION_GRAPHIC_CSP = "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; media-src data: blob:; font-src data:; connect-src 'none'; object-src 'none'; frame-src 'none'; worker-src 'none'; base-uri 'none'; form-action 'none'"
 const BUILT_IN_TEMPLATE_MARKER = /<!-- BIZ_BUILT_IN_MOTION_TEMPLATE:(providers-unavailable|invalid-ai-output) -->/
 
 function escapeHtml(value) {
@@ -130,7 +130,8 @@ export function createBuiltInMotionInput(message, reason = 'providers-unavailabl
 export function isSafeMotionHtml(value) {
   if (typeof value !== 'string' || Buffer.byteLength(value, 'utf8') > MAX_MOTION_HTML_BYTES ||
     !/^\s*<!doctype html>/i.test(value) || !/<html\b[\s\S]*<\/html>\s*$/i.test(value)) return false
-  return !/<\s*(script|iframe|object|embed|form|base|meta|foreignobject)\b/i.test(value) &&
+  return !/<\s*(iframe|object|embed|form|base|meta|foreignobject)\b/i.test(value) &&
+    !/<script\b[^>]*\bsrc\s*=/i.test(value) &&
     !/\son[a-z]+\s*=/i.test(value) &&
     !/\bjavascript\s*:/i.test(value) &&
     !/\b(?:src|href)\s*=\s*["']\s*(?:https?:|\/\/|data:text\/html)/i.test(value) &&
@@ -143,7 +144,7 @@ export function registerMotionGraphicsTool() {
   return registerTool({
     id: 'motion_graphics_create',
     name: 'Create motion graphic',
-    description: 'Create a new, prompt-specific downloadable HTML/CSS motion graphic. Use the user\'s requested subject, text, colors, shapes, composition, and movement; do not reuse a generic template. Keep it self-contained and inert: scripts, event handlers, and remote resources are prohibited.',
+    description: 'Create a new, prompt-specific downloadable HTML/CSS/JavaScript motion graphic. Use inline scripts only for local animation or interaction; never use external scripts, event-handler attributes, network requests, workers, or remote resources. Generated code is never executed on the server and previews run in an isolated sandbox.',
     inputSchema: {
       type: 'object',
       properties: {

@@ -1,11 +1,19 @@
-import React from "react";
+import React, { useMemo, useState } from "react";
 import ReactMarkdown from "react-markdown";
+import { Eye, EyeOff } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { buildCodePreviewDocument } from "@/lib/code-preview";
 
 /**
- * @param {{ content: string, className?: string }} props
+ * @param {{ content: string, className?: string, enableCodePreview?: boolean }} props
  */
-export default function Markdown({ content, className }) {
+export default function Markdown({ content, className, enableCodePreview = false }) {
+  const [codePreviewOpen, setCodePreviewOpen] = useState(false);
+  const previewDocument = useMemo(
+    () => enableCodePreview ? buildCodePreviewDocument(content) : null,
+    [content, enableCodePreview]
+  );
+
   return (
     <div className={cn("text-[16px] leading-[1.6] text-foreground/90", className)}>
       <ReactMarkdown
@@ -65,6 +73,37 @@ export default function Markdown({ content, className }) {
       >
         {content}
       </ReactMarkdown>
+      {previewDocument && (
+        <section className="mt-4 overflow-hidden rounded-xl border border-border/70 bg-card/60">
+          <div className="flex flex-wrap items-center justify-between gap-3 px-3 py-2">
+            <p className="text-xs text-muted-foreground">
+              Isolated preview · network access blocked
+            </p>
+            <button
+              type="button"
+              aria-expanded={codePreviewOpen}
+              onClick={() => setCodePreviewOpen((open) => !open)}
+              className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-border px-2.5 text-xs font-medium text-foreground hover:bg-accent"
+            >
+              {codePreviewOpen ? (
+                <EyeOff className="h-3.5 w-3.5" strokeWidth={1.7} />
+              ) : (
+                <Eye className="h-3.5 w-3.5" strokeWidth={1.7} />
+              )}
+              {codePreviewOpen ? "Hide preview" : "Preview code"}
+            </button>
+          </div>
+          {codePreviewOpen && (
+            <iframe
+              title="HTML, CSS, and JavaScript code preview"
+              srcDoc={previewDocument}
+              sandbox="allow-scripts"
+              referrerPolicy="no-referrer"
+              className="h-80 w-full border-t border-border/70 bg-white"
+            />
+          )}
+        </section>
+      )}
     </div>
   );
 }

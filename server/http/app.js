@@ -447,7 +447,7 @@ app.get('/api/files/:fileId/preview', requireUser, async (req, res, next) => {
       'Content-Type': 'text/html; charset=utf-8',
       'Content-Length': file.size_bytes,
       'Content-Disposition': 'inline',
-      'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:; base-uri 'none'; form-action 'none'; frame-ancestors 'self'",
+      'Content-Security-Policy': "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; media-src data: blob:; font-src data:; connect-src 'none'; object-src 'none'; frame-src 'none'; worker-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'",
       'X-Content-Type-Options': 'nosniff',
       'Cache-Control': 'private, no-store',
     })
