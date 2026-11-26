@@ -36,16 +36,20 @@ export function registerLinkedInTools() {
       requiresApproval: true,
       retrySafe: false,
       timeoutMs: 30_000,
-      normalizeInput: (input, { scheduleIntent } = {}) => {
+      normalizeInput: (input, { scheduleIntent, linkedinPostText } = {}) => {
+        const normalized = { ...input }
+        if (typeof linkedinPostText === 'string' &&
+          !(scheduleIntent?.mode === 'recurring' && scheduleIntent.sameText === false)) {
+          normalized.text = linkedinPostText
+        }
         if (scheduleIntent?.mode === 'now') {
-          const normalized = { ...input }
           delete normalized.schedule
           return normalized
         }
         if (!['scheduled', 'recurring'].includes(scheduleIntent?.mode) ||
           typeof scheduleIntent.scheduledAt !== 'string' ||
           typeof scheduleIntent.timezone !== 'string') {
-          return input
+          return normalized
         }
         const schedule = {
           mode: scheduleIntent.mode,
@@ -58,11 +62,11 @@ export function registerLinkedInTools() {
             intervalMinutes: scheduleIntent.intervalMinutes,
             sameText: scheduleIntent.sameText,
           })
-          if (scheduleIntent.sameText === false && Array.isArray(input.schedule?.texts)) {
-            schedule.texts = input.schedule.texts
+          if (scheduleIntent.sameText === false && Array.isArray(normalized.schedule?.texts)) {
+            schedule.texts = normalized.schedule.texts
           }
         }
-        return { ...input, schedule }
+        return { ...normalized, schedule }
       },
       validate: (input) => {
         if (typeof input?.text !== 'string' || input.text.trim().length === 0 || input.text.length > 3000) return false

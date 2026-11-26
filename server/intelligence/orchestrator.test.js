@@ -370,6 +370,28 @@ function toolGraph(toolId, maxAttempts = 2) {
   }
 }
 
+function linkedInPostGraph(text = 'Model-generated text') {
+  return {
+    tasks: [task('publish-linkedin-post', {
+      description: 'Submit the LinkedIn post for approval.',
+      type: 'tool',
+      requiredInputs: [{
+        kind: 'tool_output',
+        description: 'LinkedIn post publishing result.',
+        toolId: 'linkedin_post',
+      }],
+      expectedOutput: 'A pending LinkedIn approval.',
+      acceptanceCriteria: ['The post is submitted for approval.'],
+      riskClassification: 'medium',
+      requiredCapability: 'tool_execution',
+      specialistRole: 'execution',
+      maxAttempts: 1,
+      completionConditions: ['The approval request is created.'],
+      toolInput: { text },
+    })],
+  }
+}
+
 function registerMockAction(id, overrides = {}) {
   return registerTool({
     id,
@@ -1054,8 +1076,167 @@ test('LinkedIn post requests create an approval with the exact preview before ex
   assert.equal(database.state.approvals[0].status, 'pending')
   assert.ok(database.state.auditEvents.some((event) => event[1] === 'conversation.message.awaiting_approval'))
   assert.match(database.state.approvals[0].description, new RegExp(postText))
-  assert.match(result.reply, /Publish LinkedIn Post/)
-  assert.match(result.reply, /Approvals/)
+  assert.match(result.reply, /Draft ready in Approvals/)
+  assert.match(result.reply, /\[Go to Approvals\]\(\/approvals\)/)
+  assert.ok(result.reply.includes(postText))
+})
+
+test('inline LinkedIn post text goes directly to Approvals without a confirmation question', async () => {
+  const postText = 'Hello world'
+  const database = createDatabase()
+  const { registry, calls } = createRegistry({
+    handlers: {
+      'mock-primary': {
+        planning: () => ({ text: JSON.stringify(linkedInPostGraph('Text rewritten by the planner.')) }),
+      },
+    },
+  })
+
+  const result = await request({
+    database,
+    registry,
+    message: 'Post this to LinkedIn now: Hello world',
+    skillResolver: async () => [],
+  })
+
+  assert.equal(result.execution.status, 'awaiting_approval')
+  assert.equal(database.state.approvals.length, 1)
+  assert.deepEqual(database.state.toolExecutions[0].input, { text: postText })
+  assert.equal(database.state.toolExecutions[0].status, 'pending_approval')
+  assert.equal(database.state.approvals[0].status, 'pending')
+  assert.match(result.reply, /Draft ready in Approvals/)
+  assert.match(result.reply, /\[Go to Approvals\]\(\/approvals\)/)
+  assert.ok(result.reply.includes(postText))
+  assert.equal(calls.some(({ stage }) => stage === 'understanding'), false)
+  assert.equal(calls.some(({ stage }) => stage === 'synthesis'), false)
+  assert.doesNotMatch(result.reply, /clarify|approved the exact text/i)
+})
+
+test('post it now uses the preceding user message as the exact LinkedIn post text', async () => {
+  const database = createDatabase({ history: [{ role: 'user', content: 'Hello world' }] })
+  const { registry } = createRegistry({
+    handlers: {
+      'mock-primary': {
+        planning: () => ({ text: JSON.stringify(linkedInPostGraph()) }),
+      },
+    },
+  })
+
+  const result = await request({
+    database,
+    registry,
+    message: 'post it now',
+    skillResolver: async () => [],
+  })
+
+  assert.equal(result.execution.status, 'awaiting_approval')
+  assert.deepEqual(database.state.toolExecutions[0].input, { text: 'Hello world' })
+  assert.equal(database.state.approvals[0].status, 'pending')
+  assert.ok(result.reply.includes('Hello world'))
+})
+
+test('approval acknowledgement reuses the exact prior LinkedIn text and creates an approval', async () => {
+  const postText = 'Hello world'
+  const database = createDatabase({
+    history: [
+      { role: 'user', content: 'Post this to LinkedIn now: Hello world' },
+      { role: 'assistant', content: 'Has the user approved the exact text for posting?' },
+    ],
+  })
+  const { registry } = createRegistry({
+    handlers: {
+      'mock-primary': {
+        planning: () => ({ text: JSON.stringify(linkedInPostGraph('Rewritten copy.')) }),
+      },
+    },
+  })
+
+  const result = await request({
+    database,
+    registry,
+    message: 'Yes, I approve',
+    skillResolver: async () => [],
+  })
+
+  assert.equal(result.execution.status, 'awaiting_approval')
+  assert.deepEqual(database.state.toolExecutions[0].input, { text: postText })
+  assert.equal(database.state.approvals[0].status, 'pending')
+  assert.ok(result.reply.includes(postText))
+})
+
+test('bare LinkedIn post asks once for text, then creates the approval from the answer', async () => {
+  const firstDatabase = createDatabase()
+  const firstProvider = createRegistry()
+  const firstResult = await request({
+    database: firstDatabase,
+    registry: firstProvider.registry,
+    message: 'Post to LinkedIn',
+    skillResolver: async () => [],
+  })
+
+  assert.equal(firstResult.reply, 'What text should I post?')
+  assert.equal((firstResult.reply.match(/\?/g) || []).length, 1)
+  assert.equal(firstDatabase.state.approvals.length, 0)
+  assert.equal(firstProvider.calls.some(({ stage }) => stage === 'planning'), false)
+
+  const database = createDatabase({ history: firstDatabase.state.persistedMessages })
+  const { registry } = createRegistry({
+    handlers: {
+      'mock-primary': {
+        planning: () => ({ text: JSON.stringify(linkedInPostGraph()) }),
+      },
+    },
+  })
+  const result = await request({
+    database,
+    registry,
+    message: 'Hello world',
+    skillResolver: async () => [],
+  })
+
+  assert.equal(result.execution.status, 'awaiting_approval')
+  assert.deepEqual(database.state.toolExecutions[0].input, { text: 'Hello world' })
+  assert.equal(database.state.approvals[0].status, 'pending')
+  assert.ok(result.reply.includes('Hello world'))
+})
+
+test('LinkedIn approval preview and chat reply preserve the exact supplied text', async () => {
+  const postText = 'Biz is your AI worker that never sleeps. Chat. Connect. Automate.'
+  const database = createDatabase()
+  const { registry } = createRegistry({
+    handlers: {
+      'mock-primary': {
+        planning: () => ({ text: JSON.stringify(linkedInPostGraph('Rewritten copy.')) }),
+      },
+    },
+  })
+
+  const result = await request({
+    database,
+    registry,
+    message: `Post this to LinkedIn now: ${postText}`,
+    skillResolver: async () => [],
+  })
+
+  assert.deepEqual(database.state.toolExecutions[0].input, { text: postText })
+  assert.ok(database.state.approvals[0].description.includes(postText))
+  assert.ok(result.reply.includes(postText))
+})
+
+test('LinkedIn post text does not bypass a required schedule clarification', async () => {
+  const database = createDatabase()
+  const { registry, calls } = createRegistry()
+
+  const result = await request({
+    database,
+    registry,
+    message: 'Post to LinkedIn for one week: Hello world',
+    skillResolver: async () => [],
+  })
+
+  assert.match(result.reply, /How many posts per week, and what time each day\?/)
+  assert.equal(database.state.approvals.length, 0)
+  assert.equal(calls.some(({ stage }) => stage === 'planning'), false)
 })
 
 test('parsed LinkedIn schedule is added to tool input before creating approval', async () => {
@@ -1082,7 +1263,7 @@ test('parsed LinkedIn schedule is added to tool input before creating approval',
               }],
               requiredCapability: 'tool_execution',
               specialistRole: 'execution',
-              toolInput: { text: 'Biz is live.' },
+              toolInput: { text: 'Reworded by the planner.' },
             })],
           }),
         }),
@@ -1093,7 +1274,7 @@ test('parsed LinkedIn schedule is added to tool input before creating approval',
   const result = await request({
     database,
     registry,
-    message: 'Schedule a LinkedIn post for tomorrow at 10am: Biz is live.',
+    message: 'Schedule a LinkedIn post for tomorrow at 10:30am: Biz is live.',
     skillResolver: async () => [],
   })
 
@@ -1104,9 +1285,8 @@ test('parsed LinkedIn schedule is added to tool input before creating approval',
   assert.equal(submittedInput.schedule.timezone, 'UTC')
   assert.ok(Date.parse(submittedInput.schedule.scheduledAt) > Date.now())
   assert.equal(database.state.approvals[0].status, 'pending')
-  assert.ok(calls.find(({ stage }) => stage === 'understanding').messages.some(({ content }) =>
-    content.includes('business owners, creators, and busy people') &&
-    content.includes('without asking for its audience or basic features')))
+  assert.ok(calls.find(({ stage }) => stage === 'planning').messages.some(({ content }) =>
+    content.includes('"mode":"scheduled"')))
 })
 
 test('malformed planner fallback creates a complete LinkedIn approval task', async () => {
@@ -1197,7 +1377,8 @@ test('LinkedIn post plans with malformed acceptance criteria still reach approva
     assert.deepEqual(database.state.agentRuns[0].input.task.acceptanceCriteria, scenario.expected)
     assert.equal(database.state.toolExecutions[0].status, 'pending_approval')
     assert.equal(database.state.approvals[0].status, 'pending')
-    assert.match(result.reply, /Review the exact preview in \[Approvals\]/)
+    assert.match(result.reply, /Draft ready in Approvals/)
+    assert.ok(result.reply.includes('Biz is launching: an AI that never sleeps.'))
   }
 })
 
