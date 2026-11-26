@@ -86,6 +86,52 @@ test('conversation context retains its project scope when no project is supplied
   assert.equal(context.projectId, 'project-1')
 })
 
+test("conversation context identifies Biz's unanswered question and the request it followed", async () => {
+  const database = {
+    async query(sql) {
+      if (sql.includes('FROM conversations')) return { rowCount: 1, rows: [{ project_id: null }] }
+      if (sql.includes('FROM messages')) {
+        return {
+          rows: [
+            { role: 'assistant', content: 'When should the launch happen?' },
+            { role: 'user', content: 'Help me plan the product launch.' },
+          ],
+        }
+      }
+      return { rows: [] }
+    },
+  }
+
+  const context = await retrieveContext({ userId: 'user-1', conversationId: 'conversation-1', database })
+
+  assert.deepEqual(context.pendingQuestion, {
+    question: 'When should the launch happen?',
+    previousUserMessage: 'Help me plan the product launch.',
+  })
+})
+
+test('conversation context does not carry an old question after the user has replied', async () => {
+  const database = {
+    async query(sql) {
+      if (sql.includes('FROM conversations')) return { rowCount: 1, rows: [{ project_id: null }] }
+      if (sql.includes('FROM messages')) {
+        return {
+          rows: [
+            { role: 'user', content: 'Launch it next Friday.' },
+            { role: 'assistant', content: 'When should the launch happen?' },
+            { role: 'user', content: 'Help me plan the product launch.' },
+          ],
+        }
+      }
+      return { rows: [] }
+    },
+  }
+
+  const context = await retrieveContext({ userId: 'user-1', conversationId: 'conversation-1', database })
+
+  assert.equal(context.pendingQuestion, null)
+})
+
 test('conversation cannot be reused under a different project context', async () => {
   const database = {
     async query(sql) {

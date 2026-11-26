@@ -45,15 +45,28 @@ export async function retrieveContext({ userId, conversationId, projectId = null
       [userId, contextProjectId],
     ),
   ])
+  const messages = history.rows.reverse().map(({ role, content }) => ({ role, content }))
   const memories = selectRelevantMemories(memoryResult.rows, message, projectName, limit)
   return {
-    messages: history.rows.reverse().map(({ role, content }) => ({ role, content })),
+    messages,
+    pendingQuestion: findPendingQuestion(messages),
     memories,
     globalMemories: memories.filter((item) => item.project_id === null),
     projectMemories: contextProjectId
       ? memories.filter((item) => item.project_id === contextProjectId)
       : [],
     projectId: contextProjectId,
+  }
+}
+
+function findPendingQuestion(messages) {
+  const latest = messages.at(-1)
+  if (latest?.role !== 'assistant' || !latest.content.includes('?')) return null
+  const previousUserMessage = [...messages].reverse().find(({ role }) => role === 'user')
+  if (!previousUserMessage) return null
+  return {
+    question: latest.content,
+    previousUserMessage: previousUserMessage.content,
   }
 }
 

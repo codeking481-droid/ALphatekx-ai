@@ -758,6 +758,26 @@ test('conversation history and project memory reach every applicable model stage
   assert.ok(result.memoriesUsed.some(({ content }) => content === 'Prefer concise summaries.'))
 })
 
+test("a short reply is contextualized as an answer to Biz's latest question", async () => {
+  const database = createDatabase({
+    history: [
+      { role: 'user', content: 'Help me plan the product launch.' },
+      { role: 'assistant', content: 'When should the launch happen?' },
+    ],
+  })
+  const { registry, calls } = createRegistry()
+
+  await request({ database, registry, message: 'Next Friday.' })
+
+  const understanding = calls.find(({ stage }) => stage === 'understanding')
+  const followUpContext = understanding.messages.find(({ content }) =>
+    content.includes('Follow-up context from this conversation'))
+  assert.ok(followUpContext)
+  assert.match(followUpContext.content, /Help me plan the product launch/)
+  assert.match(followUpContext.content, /When should the launch happen\?/)
+  assert.match(followUpContext.content, /continue without asking the user to repeat/)
+})
+
 test('durable preference memories are saved automatically after a successful chat', async () => {
   const database = createDatabase()
   const { registry } = createRegistry()
