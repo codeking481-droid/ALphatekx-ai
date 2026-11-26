@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { evaluateClarification } from './clarification.js'
-import { OBJECTIVE_SPEC_SCHEMA, parseObjectiveSpec, understandObjective } from './objective.js'
+import { buildObjectiveMessages, OBJECTIVE_SPEC_SCHEMA, parseObjectiveSpec, understandObjective } from './objective.js'
 
 function objective(overrides = {}) {
   return {
@@ -21,6 +21,16 @@ function objective(overrides = {}) {
     ...overrides,
   }
 }
+
+test('objective prompt encourages useful registered tools and avoids optional creative questions', () => {
+  const prompt = buildObjectiveMessages({
+    message: 'Create a short animated intro.',
+  })[0].content
+
+  assert.match(prompt, /registered tool descriptions to identify when research, workspace\/file access, artifact creation/)
+  assert.match(prompt, /Set planningRequired for useful tool-backed or genuinely multi-step work, including read-only research/)
+  assert.match(prompt, /treat unspecified style, length, and other reversible presentation choices as safe defaults/)
+})
 
 test('objective understanding requests JSON schema output when the provider supports it', async () => {
   let request

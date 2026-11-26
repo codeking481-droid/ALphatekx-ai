@@ -14,6 +14,7 @@ export function registerFileListTool({ workspaceDir = config.workspaceDir } = {}
       additionalProperties: false,
     },
     permissions: ['tool:read'],
+    readOnly: true,
     requiresApproval: false,
     retrySafe: true,
     validate: (input) => input?.path === undefined ||

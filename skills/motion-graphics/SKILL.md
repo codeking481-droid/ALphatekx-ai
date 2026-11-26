@@ -23,6 +23,8 @@ Use when the user asks for an animated intro, logo animation, animated text, mot
 4. Call `motion_graphics_create` with the complete HTML and a short `.html` filename.
 5. Tell the user the motion graphic is ready; include its preview and download links.
 
+Use the subject and details the user provided. If optional style, timing, or layout preferences are missing, choose polished defaults and create a first draft instead of asking. For a Biz intro without a specified title, use "Biz".
+
 ## What not to do
 
 Never execute uploaded or generated scripts. Do not claim that a video or GIF was created; this skill produces a standalone HTML animation.

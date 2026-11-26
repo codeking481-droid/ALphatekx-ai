@@ -22,6 +22,9 @@ import { resolveLinkedInPostIntent } from './linkedin-post-intent.js'
 const SYSTEM_PROMPT = `You are Biz, an AI assistant built for serious work.
 
 Voice: calm, direct and precise. Lead with the answer, be specific, state assumptions, and never invent facts or capabilities.
+First distinguish a direct answer from research, file or artifact work, and connected-tool actions. Inspect the registered tool descriptions in context and use a matching tool when it materially improves the result; do not make the user choose a tool or claim a tool ran unless it actually did.
+For creative work, use sensible defaults from the request and known context, then produce a useful first draft. Ask only when a missing detail materially changes the result or blocks a safe action; do not turn optional style preferences into blockers.
+If a tool fails, explain what failed and the next useful option. Never disguise a failure as success or ask the user to repeat information already supplied.
 When the user appears to answer a question you asked earlier in this conversation, use that answer with the earlier request and continue without asking them to repeat the context. If they clearly start a new topic, handle the new request.
 Ask zero questions when the user has already supplied the required information. Never repeat an unanswered question; ask no more than four short clarification questions, and never ask in chat whether the user approves. Create action drafts in Approvals; only the user's Approve click there can authorize external actions.
 Do not disclose hidden chain-of-thought or private planning. Summarize conclusions and useful explanations only.
@@ -68,7 +71,7 @@ export async function processChatRequest({
     },
     {
       role: 'system',
-      content: "Known Biz product context for drafting: Biz is an AI assistant for business owners, creators, and busy people; its cloud-hosted service can keep working independently of the user's laptop, user-configured MCP connectors can add tools, and external actions use approval. Use this context for requests about Biz without asking for its audience or basic features. Do not claim a connector is connected or a tool is available unless the current context confirms it.",
+      content:       "Known Biz product context for drafting: Biz is a general AI assistant for business owners, creators, and busy people; it can answer questions, research with available tools, create text and files, generate HTML animations, and use user-configured connectors when present. LinkedIn is one connected action, not Biz's only purpose. Its cloud-hosted service can keep working independently of the user's laptop, and external actions use approval. Use this context for requests about Biz without asking for its audience or basic features. Do not claim a connector is connected or a tool is available unless the current context confirms it.",
     },
     ...context.messages,
     ...(context.pendingQuestion ? [{
@@ -111,7 +114,9 @@ export async function processChatRequest({
   const skillMetadata = selectedSkill
     ? { name: selectedSkill.name, version: selectedSkill.version }
     : null
-  let allowedToolIds = getSkillAllowedTools(selectedSkill, !selectedSkill)
+  let allowedToolIds = selectedSkill
+    ? getSkillAllowedTools(selectedSkill)
+    : listTools().map(({ id }) => id)
   if (selectedSkill) {
     contextMessages.push({
       role: 'system',
@@ -180,7 +185,7 @@ export async function processChatRequest({
   }
   contextMessages.push({
     role: 'system',
-    content: `Currently registered tools (these are the only available tool capabilities; do not claim unlisted connectors):\n${listTools().map(({ id, name, description }) => `- ${id} (${name}): ${description}`).join('\n')}`,
+    content: `Currently registered tools (these are the only available tool capabilities; do not claim unlisted connectors):\n${listTools().map(({ id, name, description, readOnly, requiresApproval }) => `- ${id} (${name}; read-only: ${readOnly}; approval required: ${requiresApproval}): ${description}`).join('\n')}`,
   })
   let activeProvider = understanding.provider
   let responseModel = understanding.model
@@ -870,7 +875,12 @@ function dispatchSpecialistTask({
   database,
 }) {
   if (task.type === 'tool') {
-    if (!objective.requiresExternalAction) {
+    const toolInput = task.requiredInputs.find((input) => input.kind === 'tool_output')
+    const tool = getTool(toolInput?.toolId)
+    if (!tool) {
+      throw new Error(`Tool for task "${task.id}" is no longer registered.`)
+    }
+    if (!objective.requiresExternalAction && !tool.readOnly) {
       throw new Error(`Tool task "${task.id}" is not authorized by the ObjectiveSpec.`)
     }
     const unresolved = objective.executionQuestions.filter((question) => question !== HIGH_RISK_CONFIRMATION)
@@ -882,8 +892,6 @@ function dispatchSpecialistTask({
         evidence: [{ kind: 'pre_execution_input', taskId: task.id }],
       }
     }
-    const toolInput = task.requiredInputs.find((input) => input.kind === 'tool_output')
-    const tool = getTool(toolInput?.toolId)
     if (['high', 'critical'].includes(objective.riskClassification) && !tool?.requiresApproval) {
       throw new Error(`High-risk tool task "${task.id}" must require approval.`)
     }

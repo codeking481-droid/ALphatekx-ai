@@ -23,9 +23,6 @@ export default function Composer({ value, onChange, onSend, onVoice, sending }) 
   const [listening, setListening] = useState(false);
   const [notice, setNotice] = useState("");
   const [linkedinConnected, setLinkedinConnected] = useState(false);
-  const [linkedinPreview, setLinkedinPreview] = useState("");
-  const [linkedinApprovalId, setLinkedinApprovalId] = useState("");
-  const [linkedinBusy, setLinkedinBusy] = useState(false);
 
   const canSend = (value.trim().length > 0 || attachments.length > 0) && !sending && !uploading;
 
@@ -50,45 +47,7 @@ export default function Composer({ value, onChange, onSend, onVoice, sending }) 
 
   const handleInput = (event) => {
     onChange(event.target.value);
-    setLinkedinPreview("");
-    setLinkedinApprovalId("");
     requestAnimationFrame(resize);
-  };
-
-  const previewLinkedInPost = async () => {
-    const text = value.trim();
-    if (!text || linkedinBusy) return;
-    setNotice("");
-    setLinkedinBusy(true);
-    try {
-      const preview = await api.linkedin.post({ text, approved: false });
-      setLinkedinPreview(preview.text);
-      setLinkedinApprovalId(preview.approvalId);
-    } catch (error) {
-      setNotice(error.message || "LinkedIn post preview couldn't be created.");
-    } finally {
-      setLinkedinBusy(false);
-    }
-  };
-
-  const approveLinkedInPost = async () => {
-    if (!linkedinPreview || linkedinBusy) return;
-    setNotice("");
-    setLinkedinBusy(true);
-    try {
-      await api.linkedin.post({
-        text: linkedinPreview,
-        approved: true,
-        approvalId: linkedinApprovalId,
-      });
-      setLinkedinPreview("");
-      setLinkedinApprovalId("");
-      setNotice("Your post was published to LinkedIn.");
-    } catch (error) {
-      setNotice(error.message || "The LinkedIn post couldn't be published.");
-    } finally {
-      setLinkedinBusy(false);
-    }
   };
 
   const handleFiles = async (event) => {
@@ -140,8 +99,6 @@ export default function Composer({ value, onChange, onSend, onVoice, sending }) 
         transcript += event.results[i][0].transcript;
       }
       onChange((baseTextRef.current + transcript).replace(/^\s+/, ""));
-      setLinkedinPreview("");
-      setLinkedinApprovalId("");
       requestAnimationFrame(resize);
     };
     recognition.onerror = () => {
@@ -155,14 +112,12 @@ export default function Composer({ value, onChange, onSend, onVoice, sending }) 
     setListening(true);
   };
 
-  const submit = async () => {
-    if (!canSend) return;
-    const ok = await onSend(value.trim(), attachments);
+  const submit = async (message = value.trim()) => {
+    if (!canSend || !message) return;
+    const ok = await onSend(message, attachments);
     if (ok) {
       setAttachments([]);
       setNotice("");
-      setLinkedinPreview("");
-      setLinkedinApprovalId("");
       if (textareaRef.current) textareaRef.current.style.height = "auto";
     }
   };
@@ -264,19 +219,20 @@ export default function Composer({ value, onChange, onSend, onVoice, sending }) 
           {linkedinConnected && (
             <button
               type="button"
-              onClick={previewLinkedInPost}
-              disabled={!value.trim() || sending || linkedinBusy}
-              title="Preview a LinkedIn post"
+              onClick={() => submit(`Post to LinkedIn: ${value.trim()}`)}
+              disabled={!value.trim() || !canSend}
+              title="Send this draft through Biz; review it in Approvals"
+              aria-label="Use LinkedIn tool and review the post in Approvals"
               className="inline-flex h-10 items-center gap-2 rounded-full border border-primary/70 px-3 text-xs font-semibold text-primary transition-colors hover:bg-primary/[0.15] disabled:opacity-40"
             >
-              {linkedinBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Linkedin className="h-4 w-4 text-[#0A66C2]" />}
-              <span>Post to LinkedIn</span>
+              <Linkedin className="h-4 w-4 text-[#0A66C2]" />
+              <span>LinkedIn</span>
             </button>
           )}
 
           <button
             type="button"
-            onClick={submit}
+            onClick={() => submit()}
             disabled={!canSend}
             aria-label="Send message"
             title="Send"
@@ -295,34 +251,6 @@ export default function Composer({ value, onChange, onSend, onVoice, sending }) 
           </button>
         </div>
       </div>
-
-      {linkedinPreview && (
-        <div className="mt-3 rounded-[20px] border border-[#1E2B22] bg-card p-4">
-          <p className="text-xs font-medium">LinkedIn post preview</p>
-          <p className="mt-2 whitespace-pre-wrap break-words text-sm text-foreground/90">{linkedinPreview}</p>
-          <div className="mt-3 flex flex-wrap gap-2">
-            <button
-              type="button"
-              disabled={linkedinBusy || !linkedinApprovalId}
-              onClick={approveLinkedInPost}
-              className="rounded-xl bg-primary px-3 py-2 text-xs font-semibold text-white disabled:opacity-50"
-            >
-              {linkedinBusy ? "Publishing…" : "Approve & post"}
-            </button>
-            <button
-              type="button"
-              disabled={linkedinBusy}
-              onClick={() => {
-                setLinkedinPreview("");
-                setLinkedinApprovalId("");
-              }}
-              className="rounded-xl border border-[#1E2B22] px-3 py-2 text-xs font-medium text-muted-foreground hover:bg-accent disabled:opacity-50"
-            >
-              Cancel
-            </button>
-          </div>
-        </div>
-      )}
 
       {notice && <p className="mt-2 px-1 text-[12px] text-muted-foreground">{notice}</p>}
     </div>

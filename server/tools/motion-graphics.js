@@ -5,6 +5,114 @@ import { registerTool } from './registry.js'
 export const MAX_MOTION_HTML_BYTES = 256 * 1024
 const MOTION_GRAPHIC_CSP = "default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:; base-uri 'none'; form-action 'none'"
 
+function escapeHtml(value) {
+  return value.replace(/[&<>"']/g, (character) => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;',
+  })[character])
+}
+
+function getMotionTitle(message) {
+  const subject = /\b(?:for|about|featuring|called|named)\s+["“]?([^.!?\n,"”]+)["”]?/i.exec(message)?.[1]
+  const title = (subject || 'Biz').replace(/\b(?:using|with|in|on|as)\b.*$/i, '').trim()
+  return title.slice(0, 80) || 'Biz'
+}
+
+function createDefaultMotionHtml(title) {
+  const safeTitle = escapeHtml(title)
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <title>${safeTitle} - Animated intro</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      display: grid;
+      min-height: 100vh;
+      margin: 0;
+      overflow: hidden;
+      place-items: center;
+      background: radial-gradient(ellipse at 50% 42%, #193c2c 0%, #101a14 48%, #080c0a 100%);
+      color: #f1f5f2;
+      font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+    }
+    main { position: relative; padding: 3rem 2rem; text-align: center; }
+    .orbit {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      width: min(72vw, 32rem);
+      aspect-ratio: 1;
+      border: 1px solid rgb(112 220 157 / 22%);
+      border-radius: 50%;
+      transform: translate(-50%, -50%);
+      animation: orbit 18s linear infinite;
+    }
+    .orbit::before, .orbit::after {
+      position: absolute;
+      width: .65rem;
+      aspect-ratio: 1;
+      border-radius: 50%;
+      background: #75e2a2;
+      box-shadow: 0 0 24px #75e2a2;
+      content: "";
+    }
+    .orbit::before { top: 12%; left: 18%; }
+    .orbit::after { right: 12%; bottom: 24%; width: .4rem; }
+    .mark {
+      display: inline-grid;
+      width: 3.5rem;
+      aspect-ratio: 1;
+      margin-bottom: 1.5rem;
+      place-items: center;
+      border: 1px solid rgb(117 226 162 / 65%);
+      border-radius: 1.1rem;
+      color: #75e2a2;
+      font-size: 1.6rem;
+      font-weight: 700;
+      animation: arrive .8s cubic-bezier(.2,.8,.2,1) both;
+    }
+    h1 {
+      max-width: 90vw;
+      margin: 0;
+      font-size: clamp(2.5rem, 9vw, 6rem);
+      font-weight: 650;
+      letter-spacing: -.06em;
+      line-height: 1;
+      animation: arrive .8s .12s cubic-bezier(.2,.8,.2,1) both;
+    }
+    p {
+      margin: 1.25rem 0 0;
+      color: #a9c1b1;
+      font-size: clamp(.85rem, 2vw, 1rem);
+      letter-spacing: .2em;
+      text-transform: uppercase;
+      animation: arrive .8s .24s cubic-bezier(.2,.8,.2,1) both;
+    }
+    @keyframes arrive {
+      from { opacity: 0; transform: translateY(1.25rem) scale(.98); }
+      to { opacity: 1; transform: translateY(0) scale(1); }
+    }
+    @keyframes orbit { to { transform: translate(-50%, -50%) rotate(360deg); } }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; }
+    }
+  </style>
+</head>
+<body>
+  <main aria-label="${safeTitle} animated intro">
+    <div class="orbit" aria-hidden="true"></div>
+    <div class="mark" aria-hidden="true">${safeTitle.slice(0, 1).toUpperCase()}</div>
+    <h1>${safeTitle}</h1>
+    <p>Ideas in motion</p>
+  </main>
+</body>
+</html>`
+}
+
 export function isSafeMotionHtml(value) {
   if (typeof value !== 'string' || Buffer.byteLength(value, 'utf8') > MAX_MOTION_HTML_BYTES ||
     !/^\s*<!doctype html>/i.test(value) || !/<html\b[\s\S]*<\/html>\s*$/i.test(value)) return false
@@ -34,6 +142,17 @@ export function registerMotionGraphicsTool() {
     permissions: ['tool:approved'],
     requiresApproval: false,
     retrySafe: true,
+    normalizeInput: (input, { message = '' } = {}) => {
+      const title = getMotionTitle(message)
+      const filename = typeof input.filename === 'string' &&
+        /^[a-z0-9][a-z0-9-]{0,80}\.html$/i.test(input.filename)
+        ? input.filename
+        : `${title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 70) || 'biz'}-intro.html`
+      return {
+        filename,
+        html: isSafeMotionHtml(input.html) ? input.html : createDefaultMotionHtml(title),
+      }
+    },
     auditDetails: (input) => ({
       filename: input.filename,
       bytes: Buffer.byteLength(input.html, 'utf8'),

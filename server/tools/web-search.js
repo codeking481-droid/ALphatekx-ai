@@ -15,6 +15,7 @@ export function registerWebSearchTool() {
       additionalProperties: false,
     },
     permissions: ['tool:approved'],
+    readOnly: true,
     requiresApproval: true,
     retrySafe: true,
     timeoutMs: 20_000,

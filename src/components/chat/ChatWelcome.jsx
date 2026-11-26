@@ -1,25 +1,25 @@
 import React from "react";
-import { CalendarDays, Linkedin, Plug } from "lucide-react";
+import { Clapperboard, Linkedin, Search } from "lucide-react";
 import { BrandMark } from "@/components/Brand";
 
 const SUGGESTIONS = [
   {
-    label: "Post to LinkedIn",
-    description: "Make a post and approve it",
+    label: "Research a topic",
+    description: "Find useful information and summarize it",
+    prompt: "Research current AI automation trends and give me a concise, sourced summary.",
+    icon: Search,
+  },
+  {
+    label: "Create an animation",
+    description: "Make a downloadable motion graphic",
+    prompt: "Make a motion graphics intro for Biz.",
+    icon: Clapperboard,
+  },
+  {
+    label: "Use LinkedIn",
+    description: "Create a post draft for approval",
     prompt: "Make a post on LinkedIn about Biz and show me the draft for approval.",
     icon: Linkedin,
-  },
-  {
-    label: "Automate for 1 week",
-    description: "Schedule posts for a week",
-    prompt: "Schedule LinkedIn posts for one week.",
-    icon: CalendarDays,
-  },
-  {
-    label: "Connect a tool",
-    description: "Add MCP, Gmail, or Notion via Connectors",
-    prompt: "Help me connect a tool like MCP, Gmail, or Notion.",
-    icon: Plug,
   },
 ];
 

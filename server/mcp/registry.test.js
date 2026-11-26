@@ -98,6 +98,8 @@ test('per-user MCP tools share the registry and retain generic approval policy',
     assert.equal(listed.some(({ name }) => name.includes('hidden_page')), false)
     assert.equal(listed.find(({ id }) => id.includes('search_pages')).requiresApproval, false)
     assert.equal(listed.find(({ id }) => id.includes('create_page')).requiresApproval, true)
+    assert.equal(listed.find(({ id }) => id.includes('search_pages')).readOnly, true)
+    assert.equal(listed.find(({ id }) => id.includes('create_page')).readOnly, false)
     assert.ok(listed.every((tool) => !JSON.stringify(tool).includes('secret-key')))
 
     const createTool = listed.find(({ id }) => id.includes('create_page'))

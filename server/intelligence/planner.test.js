@@ -56,6 +56,68 @@ test('planner requests a structured graph and validates model-generated output',
   assert.match(invocation.messages[0].content, /Return the whole graph wrapped as/)
 })
 
+test('planner permits useful read-only tool tasks without an external-action objective', async () => {
+  const unregister = registerTool({
+    id: 'planner-readonly-test-tool',
+    description: 'Search current public information.',
+    inputSchema: {
+      type: 'object',
+      properties: { query: { type: 'string', minLength: 1 } },
+      required: ['query'],
+      additionalProperties: false,
+    },
+    permissions: ['tool:read'],
+    requiresApproval: false,
+    validate: (input) => typeof input?.query === 'string' && input.query.trim().length > 0,
+    execute: async () => ({ results: [] }),
+  })
+  try {
+    let planningInstructions
+    const provider = {
+      id: 'read-only-planner',
+      model: 'read-only-model',
+      capabilities: { structuredOutput: false },
+      async generate({ messages }) {
+        planningInstructions = messages[0].content
+        return {
+          text: JSON.stringify({
+            tasks: [task('search', {
+              type: 'tool',
+              requiredInputs: [{
+                kind: 'tool_output',
+                description: 'Current research results.',
+                toolId: 'planner-readonly-test-tool',
+              }],
+              requiredCapability: 'tool_execution',
+              specialistRole: 'execution',
+              toolInput: { query: 'current public information' },
+            })],
+          }),
+        }
+      },
+    }
+
+    const result = await createPlanGraph(
+      { list: () => [], get: () => null },
+      provider,
+      {
+        message: 'Research this current topic.',
+        objective: { goal: 'Research this current topic.', requiresExternalAction: false },
+        userId: 'user-1',
+        database: { async query() { return { rowCount: 1 } } },
+        allowedToolIds: ['planner-readonly-test-tool'],
+        requiresExternalAction: false,
+      },
+    )
+
+    assert.match(planningInstructions, /Use read-only tools for research or inspection/)
+    assert.equal(result.planGraph.tasks[0].requiredInputs[0].toolId, 'planner-readonly-test-tool')
+    assert.deepEqual(result.planGraph.tasks[0].toolInput, { query: 'current public information' })
+  } finally {
+    unregister()
+  }
+})
+
 test('planner repairs unsafe malformed tool fields once before validating the final graph', async () => {
   const unregister = registerTool({
     id: 'planner-repair-test-tool',

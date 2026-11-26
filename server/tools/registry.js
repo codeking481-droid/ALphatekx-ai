@@ -12,6 +12,7 @@ export function registerTool(tool) {
     !tool.inputSchema || typeof tool.inputSchema !== 'object' || Array.isArray(tool.inputSchema) ||
     typeof tool.execute !== 'function' ||
     (tool.requiresApproval !== undefined && typeof tool.requiresApproval !== 'boolean') ||
+    (tool.readOnly !== undefined && typeof tool.readOnly !== 'boolean') ||
     (tool.retrySafe !== undefined && typeof tool.retrySafe !== 'boolean') ||
     (tool.timeoutMs !== undefined && (!Number.isInteger(tool.timeoutMs) || tool.timeoutMs < 1 || tool.timeoutMs > 300000)) ||
     (tool.verifyResult !== undefined && typeof tool.verifyResult !== 'function') ||
@@ -41,6 +42,7 @@ export function registerTool(tool) {
     inputSchema,
     permissions: Object.freeze([...tool.permissions]),
     requiresApproval: tool.requiresApproval !== false,
+    readOnly: tool.readOnly === true,
     retrySafe: tool.retrySafe === true,
     timeoutMs: tool.timeoutMs || 30000,
   }))

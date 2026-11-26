@@ -186,6 +186,7 @@ function createMcpTool(server, tool, callTool) {
     description: `${tool.description} (MCP server: ${server.name})`.slice(0, 2000),
     inputSchema: tool.inputSchema,
     permissions: [requiredPermission],
+    readOnly: !tool.requiresApproval,
     requiresApproval: tool.requiresApproval,
     retrySafe: !tool.requiresApproval,
     timeoutMs: 30_000,

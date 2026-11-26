@@ -522,6 +522,78 @@ test('a matched skill is loaded before planning and its tool allowlist and badge
   assert.ok(database.state.auditEvents.some(([userId, event]) => userId === USER_ID && event === 'skill.used'))
 })
 
+test('unmatched requests can use per-user MCP tools without needing a Skill', async () => {
+  const unregister = registerTool({
+    id: 'mcp_readonly_test',
+    name: 'Read connected source',
+    connector: 'mcp',
+    description: 'Read information from the connected MCP source.',
+    inputSchema: {
+      type: 'object',
+      properties: { query: { type: 'string', minLength: 1 } },
+      required: ['query'],
+      additionalProperties: false,
+    },
+    permissions: ['tool:read'],
+    readOnly: true,
+    requiresApproval: false,
+    validate: (input) => typeof input?.query === 'string' && input.query.trim().length > 0,
+    execute: async ({ input }) => ({ answer: `Result for ${input.query}` }),
+    verifyResult: (result) => typeof result?.answer === 'string',
+  })
+  try {
+    const database = createDatabase()
+    const { registry, calls } = createRegistry({
+      handlers: {
+        'mock-primary': {
+          understanding: () => ({
+            text: JSON.stringify(objective({
+              goal: 'Look up the requested connected-source information.',
+              planningRequired: true,
+            })),
+          }),
+          planning: () => ({
+            text: JSON.stringify({
+              tasks: [task('lookup', {
+                type: 'tool',
+                requiredInputs: [{
+                  kind: 'tool_output',
+                  description: 'Connected-source result.',
+                  toolId: 'mcp_readonly_test',
+                }],
+                requiredCapability: 'tool_execution',
+                specialistRole: 'execution',
+                toolInput: { query: 'latest account summary' },
+              })],
+            }),
+          }),
+        },
+      },
+    })
+
+    const result = await request({
+      database,
+      registry,
+      message: 'Look up the latest account summary from my connected source.',
+      skillResolver: async () => [],
+    })
+
+    const planningInstructions = calls.find(({ stage }) => stage === 'planning').messages[0].content
+    assert.ok(planningInstructions.includes('"id":"mcp_readonly_test"'))
+    assert.ok(planningInstructions.includes('"readOnly":true'))
+    assert.ok(database.state.toolExecutions[0], JSON.stringify({
+      execution: result.execution,
+      agentRuns: database.state.agentRuns,
+    }))
+    assert.equal(database.state.toolExecutions[0].toolId, 'mcp_readonly_test')
+    assert.equal(database.state.toolExecutions[0].status, 'completed')
+    assert.deepEqual(database.state.toolExecutions[0].input, { query: 'latest account summary' })
+    assert.equal(result.execution.complete, true)
+  } finally {
+    unregister()
+  }
+})
+
 test('multiple deliverables create independent tasks and explicit dependent tasks', async () => {
   const database = createDatabase()
   const { registry, calls } = createRegistry({
