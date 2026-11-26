@@ -215,7 +215,8 @@ export async function processChatRequest({
   const objective = understanding.objective
   const motionGraphicsRegeneration = isMotionGraphicsRegeneration(message, context.messages)
   const generatedAnimationRequest = isMotionGraphicsRequest(message, context.messages)
-  let motionGenerationUnavailable = generatedAnimationRequest && understanding.provider.id === 'local-fallback'
+  let motionGenerationUnavailable = false
+  let motionGenerationFailureMessage = null
   if (motionGraphicsRegeneration) {
     contextMessages.push({
       role: 'system',
@@ -226,7 +227,7 @@ export async function processChatRequest({
     objective.clarificationRequired = false
     objective.clarificationQuestions = []
     objective.executionQuestions = []
-    objective.planningRequired = !motionGenerationUnavailable
+    objective.planningRequired = true
     objective.requiresExternalAction = false
     objective.riskClassification = 'low'
   }
@@ -281,7 +282,15 @@ export async function processChatRequest({
     if (planning.fallbackUsed && planning.fallbackTrace) fallbackTraces.push(planning.fallbackTrace)
     activeProvider = planning.provider
     responseModel = planning.model
-    motionGenerationUnavailable ||= generatedAnimationRequest && planning.provider.id === 'local-fallback'
+    if (generatedAnimationRequest) {
+      const hasMotionToolTask = planGraph.tasks.some((task) =>
+        task.type === 'tool' && task.requiredInputs.some((input) =>
+          input.kind === 'tool_output' && input.toolId === 'motion_graphics_create'))
+      motionGenerationUnavailable = planning.provider.id === 'local-fallback' || !hasMotionToolTask
+      motionGenerationFailureMessage = planning.provider.id === 'local-fallback'
+        ? 'No AI provider returned a usable response for motion generation. No animation file or template was created. Check the provider errors above and retry when one is available.'
+        : 'The AI responded but did not provide a usable motion-graphics tool plan. No animation file or template was created. Please retry the request.'
+    }
     const workflowContext = {
       version: 1,
       objectiveId: contentId('objective', objective),
@@ -368,7 +377,7 @@ export async function processChatRequest({
     : null
   const verifiedExternalAction = hasVerifiedExternalAction(executionReport)
   let reply = motionGenerationUnavailable
-    ? 'I couldn’t generate this motion graphic because no AI provider returned a usable response. No animation file or template was created. Once a provider is available, I can generate it with the motion-graphics tool.'
+    ? motionGenerationFailureMessage
     : clarificationReply || (executionReport && !executionReport.complete
     ? renderIncompleteExecution(executionReport, planGraph, objective.requiresExternalAction && !verifiedExternalAction)
     : objective.requiresExternalAction && !verifiedExternalAction
@@ -409,7 +418,15 @@ export async function processChatRequest({
     reply = completion.result.text.trim()
   }
 
-  const fallbackNotice = [...new Set(fallbackTraces.map(formatFallbackTrace).filter(Boolean))].join('\n')
+  const fallbackNotice = [...new Set(fallbackTraces.map((trace) => {
+    const outcomeTrace = activeProvider.id !== 'local-fallback' && trace.at(-1)?.status === 'local'
+      ? [
+          ...trace.slice(0, -1),
+          { name: activeProvider.name, provider: activeProvider.id, status: 'used' },
+        ]
+      : trace
+    return formatFallbackTrace(outcomeTrace)
+  }).filter(Boolean))].join('\n')
   if (fallbackNotice && reply) reply = `${fallbackNotice}\n\n${reply}`
 
   if (jobId) throwIfAborted(signal)
@@ -951,7 +968,9 @@ function dispatchSpecialistTask({
     if (!tool) {
       throw new Error(`Tool for task "${task.id}" is no longer registered.`)
     }
-    if (!objective.requiresExternalAction && !tool.readOnly) {
+    const requestedMotionArtifact = tool.id === 'motion_graphics_create' &&
+      isMotionGraphicsRequest(request, contextMessages)
+    if (!objective.requiresExternalAction && !tool.readOnly && !requestedMotionArtifact) {
       throw new Error(`Tool task "${task.id}" is not authorized by the ObjectiveSpec.`)
     }
     const unresolved = objective.executionQuestions.filter((question) => question !== HIGH_RISK_CONFIRMATION)

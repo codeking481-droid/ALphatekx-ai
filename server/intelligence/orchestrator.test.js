@@ -16,7 +16,7 @@ const PROJECT_ID = 'project-1'
 registerWebSearchTool()
 registerFileTools()
 registerSkillCreateTool()
-registerMotionGraphicsTool()
+let unregisterMotionGraphicsTool = registerMotionGraphicsTool()
 registerLinkedInTools()
 
 function objective(overrides = {}) {
@@ -394,6 +394,29 @@ function linkedInPostGraph(text = 'Model-generated text') {
   }
 }
 
+function motionGraphicsGraph(html) {
+  return {
+    tasks: [task('create-motion-graphic', {
+      description: 'Create a downloadable motion graphic from the user brief.',
+      type: 'tool',
+      requiredInputs: [{
+        kind: 'tool_output',
+        description: 'Created motion graphic file.',
+        toolId: 'motion_graphics_create',
+      }],
+      dependencies: [],
+      expectedOutput: 'A previewable and downloadable HTML animation.',
+      acceptanceCriteria: ['The requested animation file is created.'],
+      riskClassification: 'low',
+      requiredCapability: 'tool_execution',
+      specialistRole: 'execution',
+      maxAttempts: 1,
+      completionConditions: ['The animation file is available.'],
+      toolInput: { filename: 'coffee-intro.html', html },
+    })],
+  }
+}
+
 function registerMockAction(id, overrides = {}) {
   return registerTool({
     id,
@@ -470,15 +493,17 @@ test('clear requests use ObjectiveSpec and skip planning and research', async ()
 test('motion graphics are not fabricated when every AI provider is unavailable', async () => {
   const database = createDatabase()
   const ids = ['groq', 'workers_ai', 'openrouter', 'gemini', 'worker1']
-  const handlers = Object.fromEntries(ids.map((id) => [id, {
-    understanding: () => {
+  const failProvider = (id) => () => {
       throw new ProviderError('Provider unavailable', {
         provider: id,
         status: 503,
         upstreamStatus: 429,
         retryable: true,
       })
-    },
+    }
+  const handlers = Object.fromEntries(ids.map((id) => [id, {
+    understanding: failProvider(id),
+    planning: failProvider(id),
   }]))
   const { registry, calls } = createRegistry({ ids, handlers })
 
@@ -490,9 +515,86 @@ test('motion graphics are not fabricated when every AI provider is unavailable',
 
   assert.match(result.reply, /No animation file or template was created/)
   assert.doesNotMatch(result.reply, /\/api\/files\//)
-  assert.deepEqual(calls.map(({ stage }) => stage), ['understanding', 'understanding', 'understanding', 'understanding', 'understanding'])
+  assert.equal(calls.filter(({ stage }) => stage === 'understanding').length, ids.length)
+  assert.equal(calls.filter(({ stage }) => stage === 'planning').length, ids.length)
   assert.equal(database.state.toolExecutions.length, 0)
   assert.equal(database.state.approvals.length, 0)
+})
+
+test('motion generation retries planning after intent fallback and can execute its internal artifact tool', async () => {
+  const database = createDatabase()
+  const generatedHtml = '<!doctype html><html><head><style>@keyframes intro { from {opacity:0} to {opacity:1} }</style></head><body><h1>Coffee launch</h1></body></html>'
+  unregisterMotionGraphicsTool()
+  const unregisterMockMotionGraphics = registerTool({
+    id: 'motion_graphics_create',
+    name: 'Create motion graphic',
+    description: 'Create a safe downloadable HTML animation.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        filename: { type: 'string' },
+        html: { type: 'string' },
+      },
+      required: ['filename', 'html'],
+      additionalProperties: false,
+    },
+    permissions: ['tool:approved'],
+    requiresApproval: false,
+    retrySafe: true,
+    validate: (input) => input?.filename === 'coffee-intro.html' && input?.html === generatedHtml,
+    execute: async ({ input }) => ({
+      name: input.filename,
+      url: '/api/files/test-motion-file',
+      size: Buffer.byteLength(input.html),
+    }),
+    verifyResult: (result) => typeof result?.url === 'string',
+  })
+  try {
+    const { registry, calls } = createRegistry({
+      ids: ['groq'],
+      handlers: {
+        groq: {
+          understanding: () => {
+            throw new ProviderError('Objective response unavailable', {
+              provider: 'groq',
+              status: 503,
+              upstreamStatus: 429,
+              retryable: false,
+            })
+          },
+          planning: () => ({ text: JSON.stringify(motionGraphicsGraph(generatedHtml)) }),
+          synthesis: ({ messages }) => {
+            assert.ok(messages.some(({ content }) => content.includes('/api/files/test-motion-file')))
+            return { text: 'The AI-generated animation is ready to preview and download.' }
+          },
+        },
+      },
+    })
+
+    const result = await request({
+      database,
+      registry,
+      message: 'Create a motion graphics intro for a coffee brand.',
+      skillResolver: async () => [],
+    })
+
+    assert.ok(calls.some(({ stage }) => stage === 'understanding'))
+    assert.ok(calls.some(({ stage }) => stage === 'planning'))
+    assert.equal(result.provider, 'groq')
+    assert.equal(result.execution.complete, true)
+    assert.equal(database.state.toolExecutions[0].toolId, 'motion_graphics_create')
+    assert.equal(database.state.toolExecutions[0].status, 'completed')
+    assert.deepEqual(database.state.toolExecutions[0].input, {
+      filename: 'coffee-intro.html',
+      html: generatedHtml,
+    })
+    assert.match(result.reply, /AI-generated animation is ready/)
+    assert.doesNotMatch(result.reply, /used a local fallback response/i)
+    assert.equal(database.state.approvals.length, 0)
+  } finally {
+    unregisterMockMotionGraphics()
+    unregisterMotionGraphicsTool = registerMotionGraphicsTool()
+  }
 })
 
 test('capability questions receive the registered tool list without planning an action', async () => {
