@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { link, lstat, mkdir, readFile, rm, rmdir, unlink, writeFile } from 'node:fs/promises'
+import { link, lstat, mkdir, readFile, rm, unlink, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { pool } from '../db/pool.js'
 import { audit } from '../observability/audit.js'
@@ -23,8 +23,10 @@ export async function installSkill({
   skillsDir = config.skillsDir,
   approvedDangerous = false,
   source = 'upload',
+  supportingFiles = [],
 }) {
   const skill = parseSkillMarkdown(markdown)
+  const safeSupportingFiles = normalizeSupportingFiles(supportingFiles)
   if (skill.name === 'create-skill') throw httpError(409, 'The built-in create-skill skill cannot be replaced.')
   const available = await getAvailableSkills({ userId, database, skillsDir })
   const existing = available.find((item) => item.name === skill.name)
@@ -46,11 +48,11 @@ export async function installSkill({
   }
   if (existing) throw httpError(409, `Skill "${skill.name}" is already installed.`)
   if (skill.dangerous && !approvedDangerous) {
-    const approval = await createSkillApproval({ userId, skill, action: 'install', database, source })
+    const approval = await createSkillApproval({ userId, skill, action: 'install', database, source, supportingFiles: safeSupportingFiles })
     return { status: 'pending_approval', approval }
   }
 
-  const target = await writePersonalSkill({ userId, name: skill.name, markdown, skillsDir })
+  const target = await writePersonalSkill({ userId, name: skill.name, markdown, supportingFiles: safeSupportingFiles, skillsDir })
   try {
     await database.query(
       `INSERT INTO user_skills (user_id, name, enabled, source)
@@ -66,7 +68,7 @@ export async function installSkill({
       details: { name: skill.name, version: skill.version, source, tools: skill.tools },
     }, database)
   } catch (error) {
-    await rmdir(path.dirname(target)).catch(() => {})
+    await rm(path.dirname(target), { recursive: true, force: true })
     throw error
   }
   return { status: 'installed', skill: publicSkill(skill, { enabled: true, source: displaySource(source) }) }
@@ -139,8 +141,7 @@ export async function removeSkill({ userId, name, database = pool, skillsDir = c
   const skill = parseSkillMarkdown(await readFile(skillFile, 'utf8'))
   if (skill.name !== name) throw httpError(409, 'Skill folder and frontmatter names do not match.')
 
-  await unlink(skillFile)
-  await rmdir(skillDirectory)
+  await rm(skillDirectory, { recursive: true })
   await database.query('DELETE FROM user_skills WHERE user_id = $1 AND name = $2', [userId, name])
   await audit({
     userId,
@@ -172,7 +173,7 @@ export async function decideSkillApproval({ userId, approvalId, decision, databa
   try {
     await client.query('BEGIN')
     const { rows } = await client.query(
-      `SELECT id, name, action, markdown, source, status
+      `SELECT id, name, action, markdown, source, status, supporting_files
        FROM skill_install_requests
        WHERE id = $1 AND user_id = $2 AND status = 'pending' AND expires_at > now()
        FOR UPDATE`,
@@ -190,6 +191,7 @@ export async function decideSkillApproval({ userId, approvalId, decision, databa
           skillsDir,
           approvedDangerous: true,
           source: request.source,
+          supportingFiles: decodeSupportingFiles(request.supporting_files),
         })
         if (installed.status !== 'installed' && installed.status !== 'enabled') {
           throw new Error('Approved skill could not be installed.')
@@ -256,12 +258,12 @@ export async function initializeSkills(options = {}) {
   return initializeSkillLoader(options)
 }
 
-async function createSkillApproval({ userId, skill, action, database, source }) {
+async function createSkillApproval({ userId, skill, action, database, source, supportingFiles = [] }) {
   const { rows } = await database.query(
-    `INSERT INTO skill_install_requests (user_id, name, action, markdown, source, status, expires_at)
-     VALUES ($1, $2, $3, $4, $5, 'pending', now() + interval '30 minutes')
+    `INSERT INTO skill_install_requests (user_id, name, action, markdown, source, supporting_files, status, expires_at)
+     VALUES ($1, $2, $3, $4, $5, $6::jsonb, 'pending', now() + interval '30 minutes')
      RETURNING id, name, action, expires_at, created_at`,
-    [userId, skill.name, action, skill.markdown, persistedSource(source)],
+    [userId, skill.name, action, skill.markdown, persistedSource(source), JSON.stringify(encodeSupportingFiles(supportingFiles))],
   )
   const approval = rows[0]
   await audit({
@@ -274,7 +276,7 @@ async function createSkillApproval({ userId, skill, action, database, source }) 
   return approval
 }
 
-async function writePersonalSkill({ userId, name, markdown, skillsDir }) {
+async function writePersonalSkill({ userId, name, markdown, supportingFiles, skillsDir }) {
   const userDirectory = getUserSkillsDirectory(userId, skillsDir)
   await mkdir(skillsDir, { recursive: true })
   if (!await existingSafeDirectory(skillsDir)) throw new Error('The skills root must be a real directory.')
@@ -296,10 +298,16 @@ async function writePersonalSkill({ userId, name, markdown, skillsDir }) {
     await writeFile(temporary, markdown, { encoding: 'utf8', flag: 'wx', mode: 0o600 })
     await link(temporary, target)
     await unlink(temporary)
+    for (const file of supportingFiles) {
+      const filePath = path.join(skillDirectory, ...file.path.split('/'))
+      const parent = path.dirname(filePath)
+      await mkdir(parent, { recursive: true })
+      await writeFile(filePath, file.content, { flag: 'wx', mode: 0o600 })
+    }
     return target
   } catch (error) {
     await rm(temporary, { force: true })
-    await rmdir(skillDirectory).catch(() => {})
+    await rm(skillDirectory, { recursive: true, force: true })
     throw error
   }
 }
@@ -311,6 +319,7 @@ function publicSkill(skill, overrides) {
     version: skill.version,
     permissions: [...skill.permissions],
     tools: [...skill.tools],
+    creates: [...(skill.creates || ['text'])],
     dangerous: skill.dangerous,
     ...overrides,
   }
@@ -334,4 +343,34 @@ function isSkillName(value) {
 
 function httpError(status, message) {
   return Object.assign(new Error(message), { status })
+}
+
+function normalizeSupportingFiles(files) {
+  if (!Array.isArray(files) || files.length > 8) throw httpError(400, 'A skill may contain at most 8 supporting files.')
+  let totalBytes = 0
+  return files.map((file) => {
+    const parts = typeof file?.path === 'string' ? file.path.split('/') : []
+    if (parts.length < 2 || !['scripts', 'references', 'assets'].includes(parts[0]) ||
+      parts.some((part) => !part || part === '.' || part === '..' || !/^[a-z0-9._ -]{1,128}$/i.test(part)) ||
+      file.path.length > 512 || file.path.includes('\\') || !Buffer.isBuffer(file.content)) {
+      throw httpError(400, 'Skill supporting files must be safe files inside scripts/, references/, or assets/.')
+    }
+    if (file.content.length > 2 * 1024 * 1024 || totalBytes + file.content.length > 4 * 1024 * 1024) {
+      throw httpError(413, 'Skill supporting files are limited to 4 MiB total and 2 MiB per file.')
+    }
+    totalBytes += file.content.length
+    return { path: file.path, content: file.content }
+  })
+}
+
+function encodeSupportingFiles(files) {
+  return files.map(({ path: filePath, content }) => ({ path: filePath, content: content.toString('base64') }))
+}
+
+function decodeSupportingFiles(files) {
+  if (!Array.isArray(files)) return []
+  return files.map(({ path: filePath, content }) => ({
+    path: filePath,
+    content: Buffer.from(content, 'base64'),
+  }))
 }

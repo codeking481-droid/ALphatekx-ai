@@ -3,6 +3,9 @@ import { MAX_SKILL_BYTES } from './loader.js'
 
 export const MAX_SKILL_UPLOAD_BYTES = 8 * 1024 * 1024
 const MAX_ZIP_ENTRIES = 1024
+const MAX_SUPPORTING_FILES = 8
+const MAX_SUPPORTING_FILE_BYTES = 2 * 1024 * 1024
+const MAX_SUPPORTING_BYTES = 4 * 1024 * 1024
 
 export function extractSkillUpload(file) {
   if (!file || !Buffer.isBuffer(file.buffer)) {
@@ -22,6 +25,7 @@ export function extractSkillUpload(file) {
       fallbackName: pathBase(file.originalname).replace(/\.md$/i, ''),
       ignoredFiles: [],
       ignoredFileCount: 0,
+      supportingFiles: [],
     }
   }
   if (!name.endsWith('.zip')) {
@@ -33,6 +37,7 @@ export function extractSkillUpload(file) {
     fallbackName: extracted.fallbackName || pathBase(file.originalname).replace(/\.zip$/i, ''),
     ignoredFiles: extracted.ignoredFiles,
     ignoredFileCount: extracted.ignoredFileCount,
+    supportingFiles: extracted.supportingFiles,
   }
 }
 
@@ -56,6 +61,7 @@ function extractSkillEntry(buffer) {
   let cursor = directoryOffset
   const skillEntries = []
   const ignoredFiles = []
+  const fileEntries = []
   for (let index = 0; index < entries; index += 1) {
     if (cursor + 46 > buffer.length || buffer.readUInt32LE(cursor) !== 0x02014b50) throw invalidArchive()
     const flags = buffer.readUInt16LE(cursor + 8)
@@ -98,6 +104,16 @@ function extractSkillEntry(buffer) {
     } else {
       ignoredFiles.push(entryName)
     }
+    fileEntries.push({
+      entryName,
+      flags,
+      method,
+      checksum,
+      compressedSize,
+      uncompressedSize,
+      localOffset,
+      mode: (externalAttributes >>> 16) & 0xffff,
+    })
     cursor = recordEnd
   }
   if (cursor !== directoryOffset + directorySize) throw invalidArchive()
@@ -114,33 +130,69 @@ function extractSkillEntry(buffer) {
   if (skillEntry.uncompressedSize > MAX_SKILL_BYTES || ![0, 8].includes(skillEntry.method)) {
     throw Object.assign(new Error(`SKILL.md must be ${MAX_SKILL_BYTES} bytes or smaller and use standard ZIP compression.`), { status: 400 })
   }
-  const { localOffset, entryName, method, compressedSize, uncompressedSize, checksum } = skillEntry
-  if (localOffset + 30 > directoryOffset || buffer.readUInt32LE(localOffset) !== 0x04034b50) throw invalidArchive()
+  const skillContent = readZipEntry(buffer, skillEntry, directoryOffset, MAX_SKILL_BYTES)
+  const rootPrefix = skillEntry.entryName.slice(0, -'SKILL.md'.length)
+  const unsupportedFiles = ignoredFiles.filter((entryName) => {
+    if (!entryName.startsWith(rootPrefix)) return true
+    return !/^(?:scripts|references|assets)\//i.test(entryName.slice(rootPrefix.length))
+  })
+  const supportingFiles = []
+  let supportingBytes = 0
+  for (const entry of fileEntries) {
+    if (!entry.entryName.startsWith(rootPrefix)) continue
+    const relativePath = entry.entryName.slice(rootPrefix.length)
+    if (!/^(?:scripts|references|assets)\//i.test(relativePath)) continue
+    if (!isSafeSupportingPath(relativePath) || (entry.mode && (entry.mode & 0o170000) === 0o120000)) {
+      throw invalidArchive()
+    }
+    if (supportingFiles.length >= MAX_SUPPORTING_FILES ||
+      entry.uncompressedSize > MAX_SUPPORTING_FILE_BYTES ||
+      supportingBytes + entry.uncompressedSize > MAX_SUPPORTING_BYTES) {
+      throw Object.assign(new Error('Skill supporting files are limited to 8 files and 4 MiB total.'), { status: 413 })
+    }
+    const content = readZipEntry(buffer, entry, directoryOffset, MAX_SUPPORTING_FILE_BYTES)
+    supportingBytes += content.length
+    supportingFiles.push({ path: relativePath, content })
+  }
+  return {
+    content: skillContent,
+    fallbackName: skillEntry.fallbackName,
+    ignoredFiles: unsupportedFiles.slice(0, 20),
+    ignoredFileCount: unsupportedFiles.length,
+    supportingFiles,
+  }
+}
+
+function readZipEntry(buffer, entry, directoryOffset, maxBytes) {
+  const { localOffset, entryName, method, compressedSize, uncompressedSize, checksum, flags } = entry
+  if (uncompressedSize > maxBytes || ![0, 8].includes(method) ||
+    localOffset + 30 > directoryOffset || buffer.readUInt32LE(localOffset) !== 0x04034b50) {
+    throw invalidArchive()
+  }
   const localFlags = buffer.readUInt16LE(localOffset + 6)
   const localMethod = buffer.readUInt16LE(localOffset + 8)
   const localNameLength = buffer.readUInt16LE(localOffset + 26)
   const localExtraLength = buffer.readUInt16LE(localOffset + 28)
   const localName = decodeEntryName(buffer.subarray(localOffset + 30, localOffset + 30 + localNameLength))
   const dataOffset = localOffset + 30 + localNameLength + localExtraLength
-  if ((localFlags & 1) !== 0 || localMethod !== method || localName !== entryName ||
-    dataOffset + compressedSize > directoryOffset) throw invalidArchive()
+  if ((flags & 1) !== 0 || (localFlags & 1) !== 0 || localMethod !== method ||
+    localName !== entryName || dataOffset + compressedSize > directoryOffset) throw invalidArchive()
 
   const compressed = buffer.subarray(dataOffset, dataOffset + compressedSize)
   let content
   try {
-    content = method === 0
-      ? compressed
-      : inflateRawSync(compressed, { maxOutputLength: MAX_SKILL_BYTES })
-  } catch {
-    throw Object.assign(new Error('SKILL.md could not be decompressed from the ZIP.'), { status: 400 })
+    content = method === 0 ? compressed : inflateRawSync(compressed, { maxOutputLength: maxBytes })
+  } catch (cause) {
+    throw Object.assign(new Error('A skill file could not be decompressed from the ZIP.', { cause }), { status: 400 })
   }
   if (content.length !== uncompressedSize || crc32(content) !== checksum) throw invalidArchive()
-  return {
-    content,
-    fallbackName: skillEntry.fallbackName,
-    ignoredFiles: ignoredFiles.slice(0, 20),
-    ignoredFileCount: ignoredFiles.length,
-  }
+  return content
+}
+
+function isSafeSupportingPath(value) {
+  return value.length <= 512 && !value.includes('\\') && !value.includes('\0') &&
+    value.split('/').every((part) =>
+      part && part !== '.' && part !== '..' && /^[a-z0-9._ -]{1,128}$/i.test(part))
 }
 
 function findEndRecord(buffer) {

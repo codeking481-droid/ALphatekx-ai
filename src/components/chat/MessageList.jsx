@@ -35,13 +35,13 @@ function Thinking() {
   );
 }
 
-export default function MessageList({ messages, thinking, showAds = false }) {
+export default function MessageList({ messages, thinking, showAds = false, hiddenMessageId = null }) {
   const [adsDismissed, setAdsDismissed] = useState(false);
   return (
     <div className="space-y-7">
       {messages.map((message, index) => (
         <React.Fragment key={message.id || `${message.role}-${index}`}>
-          <MessageItem message={message} />
+          {message.id !== hiddenMessageId && <MessageItem message={message} />}
           {showAds && !adsDismissed && (index + 1) % 10 === 0 && (
             <Promotion onDismiss={() => setAdsDismissed(true)} />
           )}

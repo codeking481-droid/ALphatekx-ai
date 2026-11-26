@@ -150,6 +150,21 @@ async function closeSession(session, requestImpl, lookup) {
   }
 }
 
+export function createPinnedLookup(addresses) {
+  const address = addresses?.[0]
+  if (!address || typeof address.address !== 'string' || !Number.isInteger(address.family)) {
+    throw new Error('The MCP server has no valid public IP address.')
+  }
+  return (_hostname, options, callback) => {
+    if (typeof options === 'function') {
+      callback = options
+      options = {}
+    }
+    if (options?.all) callback(null, [address])
+    else callback(null, address.address, address.family)
+  }
+}
+
 function makeHeaders(apiKey, sessionId = null, customHeaders = {}) {
   const headers = {
     Accept: 'application/json, text/event-stream',
@@ -237,15 +252,12 @@ function normalizeRemoteTool(tool) {
 }
 
 async function requestPinned({ url, addresses, method, headers, body, signal }) {
-  const address = addresses[0]
   return new Promise((resolve, reject) => {
     const request = https.request(url, {
       method,
       headers,
       signal,
-      lookup(_hostname, _options, callback) {
-        callback(null, address.address, address.family)
-      },
+      lookup: createPinnedLookup(addresses),
     }, (response) => {
       const chunks = []
       let size = 0

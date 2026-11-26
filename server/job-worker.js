@@ -6,6 +6,7 @@ import { recoverStaleExecutions } from './tools/executor.js'
 import { syncToolDefinitions } from './tools/sync.js'
 import { registerWebSearchTool } from './tools/web-search.js'
 import { registerFileTools } from './tools/file-tools.js'
+import { registerMotionGraphicsTool } from './tools/motion-graphics.js'
 import { registerSkillCreateTool } from './skills/skill-create.js'
 import { registerLinkedInTools } from './linkedin/tools.js'
 import { initializeSkills } from './skills/service.js'
@@ -20,6 +21,7 @@ validateWorkerConfig()
 registerWebSearchTool()
 registerLinkedInTools()
 registerFileTools()
+registerMotionGraphicsTool()
 registerSkillCreateTool()
 await initializeSkills()
 await pool.query('SELECT 1')

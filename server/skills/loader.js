@@ -10,6 +10,7 @@ const VALID_PERMISSIONS = new Set(['tool:read', 'tool:approved'])
 const DANGEROUS_TOOLS = new Set(['file_write', 'skill_create', 'run_code', 'shell'])
 const BUILTIN_TOOL_IDS = new Set(['web_search', 'file_read', 'file_list', 'file_write'])
 const DEFAULT_SKILL_TOOL_IDS = new Set(['web_search', 'file_read', 'file_list'])
+const SKILL_CREATION_TYPES = new Set(['text', 'file', 'animation'])
 
 export function parseSkillMarkdown(markdown) {
   try {
@@ -28,7 +29,7 @@ function parseSkillMarkdownContent(markdown) {
   if (!match) throw new Error('SKILL.md must begin with a YAML frontmatter block.')
 
   const frontmatter = parseFrontmatter(match[1])
-  const allowedFields = new Set(['name', 'description', 'version', 'permissions', 'tools'])
+  const allowedFields = new Set(['name', 'description', 'version', 'permissions', 'tools', 'creates'])
   if (Object.keys(frontmatter).some((key) => !allowedFields.has(key))) {
     throw new Error('SKILL.md frontmatter contains an unsupported field.')
   }
@@ -67,6 +68,7 @@ function parseSkillMarkdownContent(markdown) {
     version,
     permissions: [...permissions],
     tools: [...tools],
+    creates: normalizeCreationTypes(frontmatter.creates, `${name} ${description} ${body}`),
     body,
     markdown,
     dangerous: tools.some((id) => DANGEROUS_TOOLS.has(id)),
@@ -97,6 +99,7 @@ export function normalizeSkillUpload(markdown, fallbackName = 'uploaded-skill') 
     ? frontmatter.version
     : '1.0.0'
   const tools = normalizeUploadTools(frontmatter.tools)
+  const creates = normalizeCreationTypes(frontmatter.creates, `${name} ${description} ${body}`)
   const permissions = [...new Set(tools.flatMap((id) => getTool(id).permissions))]
   const instructions = body || "Use this skill when it is relevant to the user's request."
   const yaml = [
@@ -107,6 +110,8 @@ export function normalizeSkillUpload(markdown, fallbackName = 'uploaded-skill') 
     ...permissions.map((permission) => `  - ${permission}`),
     'tools:',
     ...tools.map((id) => `  - ${id}`),
+    'creates:',
+    ...creates.map((type) => `  - ${type}`),
   ].join('\n')
 
   return `---\n${yaml}\n---\n\n${instructions}\n`
@@ -130,7 +135,7 @@ function parseUploadFrontmatter(source) {
       }
       value = style === '>' ? block.join(' ') : block.join('\n')
       result[key] = value
-    } else if (['tools', 'permissions'].includes(key)) {
+    } else if (['tools', 'permissions', 'creates'].includes(key)) {
       const values = []
       if (!value.trim()) {
         while (index + 1 < lines.length) {
@@ -224,7 +229,7 @@ export function parseFrontmatter(source) {
     const field = /^([a-z_]+):(?:\s*(.*))?$/.exec(rawLine)
     if (!field) throw new Error('Skill frontmatter must use simple YAML key/value fields and lists.')
     if (Object.hasOwn(result, field[1])) throw new Error(`Duplicate frontmatter field: ${field[1]}.`)
-    activeList = ['permissions', 'tools'].includes(field[1]) && !field[2] ? field[1] : null
+    activeList = ['permissions', 'tools', 'creates'].includes(field[1]) && !field[2] ? field[1] : null
     result[field[1]] = activeList ? [] : parseScalar(field[2] || '')
   }
   return result
@@ -291,7 +296,7 @@ export async function getAvailableSkills({ userId, database, skillsDir = config.
   const skills = []
   for (const skill of bundled.skills) {
     const builtin = skill.name === 'create-skill'
-    const enabledByDefault = builtin || skill.name === 'manage-linkedin'
+    const enabledByDefault = builtin || ['manage-linkedin', 'motion-graphics'].includes(skill.name)
     skills.push({
       ...skill,
       builtin,
@@ -392,15 +397,24 @@ export async function scanDirectory(directory, {
       const markdown = new TextDecoder('utf-8', { fatal: true }).decode(await readFile(skillFile))
       const parsed = parseSkillMarkdown(markdown)
       if (parsed.name !== entry.name) throw new Error('Skill folder name must match frontmatter name.')
+      const supportingFiles = await readSkillSupportingFiles(folder)
       skills.push({
         name: parsed.name,
         description: parsed.description,
         version: parsed.version,
         permissions: parsed.permissions,
         tools: parsed.tools,
-        body: parsed.body,
+        creates: parsed.creates,
+        body: [
+          parsed.body,
+          ...supportingFiles.references.map(({ path: filePath, content }) =>
+            `## Supporting reference: ${filePath}\n\n${content}`),
+          ...(supportingFiles.scripts.length ? [`Uploaded scripts are inert and were not read or executed: ${supportingFiles.scripts.join(', ')}`] : []),
+          ...(supportingFiles.assets.length ? [`Available assets (not executed): ${supportingFiles.assets.join(', ')}`] : []),
+        ].filter(Boolean).join('\n\n'),
         markdown: parsed.markdown,
         dangerous: parsed.dangerous,
+        supportingFiles,
         sourcePath: path.relative(skillsDir, skillFile),
       })
     } catch (error) {
@@ -412,6 +426,60 @@ export async function scanDirectory(directory, {
     }
   }
   return { skills, valid: skills.length, invalid }
+}
+
+async function readSkillSupportingFiles(skillDirectory) {
+  const result = { scripts: [], references: [], assets: [] }
+  let totalBytes = 0
+  let fileCount = 0
+  async function visit(directory, category, relative = '') {
+    let entries
+    try {
+      entries = await readdir(directory, { withFileTypes: true })
+    } catch (error) {
+      if (error.code === 'ENOENT') return
+      throw error
+    }
+    for (const entry of entries) {
+      if (entry.isSymbolicLink()) continue
+      const childPath = path.join(directory, entry.name)
+      const relativePath = path.posix.join(relative, entry.name)
+      if (entry.isDirectory()) {
+        if (relativePath.split('/').length < 5) await visit(childPath, category, relativePath)
+        continue
+      }
+      if (!entry.isFile()) continue
+      fileCount += 1
+      if (fileCount > 8) throw new Error('A skill has too many supporting files.')
+      const stat = await lstat(childPath)
+      if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 2 * 1024 * 1024 ||
+        totalBytes + stat.size > 4 * 1024 * 1024) {
+        throw new Error('Skill supporting files exceed their size limits.')
+      }
+      totalBytes += stat.size
+      const filePath = `${category}/${relativePath}`
+      if (category === 'references') {
+        const content = new TextDecoder('utf-8', { fatal: true }).decode(await readFile(childPath))
+        result.references.push({
+          path: filePath,
+          content: content.length > 50_000 ? `${content.slice(0, 50_000)}\n[Reference truncated.]` : content,
+        })
+      } else {
+        result[category].push(filePath)
+      }
+    }
+  }
+  for (const category of ['scripts', 'references', 'assets']) {
+    const directory = path.join(skillDirectory, category)
+    try {
+      const stat = await lstat(directory)
+      if (!stat.isDirectory() || stat.isSymbolicLink()) continue
+      await visit(directory, category)
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error
+    }
+  }
+  return result
 }
 
 function parseScalar(value) {
@@ -428,4 +496,13 @@ function parseScalar(value) {
 
 function tokenize(value) {
   return new Set(String(value || '').toLowerCase().match(/[a-z0-9][a-z0-9+.-]{1,}/g) || [])
+}
+
+function normalizeCreationTypes(value, context = '') {
+  const requested = Array.isArray(value) ? value.filter((item) => SKILL_CREATION_TYPES.has(item)) : []
+  if (requested.length) return [...new Set(requested)]
+  const inferred = new Set(['text'])
+  if (/\b(file|document|html|download|artifact)\b/i.test(context)) inferred.add('file')
+  if (/\b(animation|motion graphics|gif|video|animated)\b/i.test(context)) inferred.add('animation')
+  return [...inferred]
 }

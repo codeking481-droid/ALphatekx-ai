@@ -31,6 +31,9 @@ export default function MessageItem({ message }) {
   const isUser = message.role === "user";
   const attachments = message.attachments || [];
   const content = isUser ? message.content || "" : displayContent(message.content);
+  const motionGraphicId = !isUser
+    ? content.match(/\/api\/files\/([a-f0-9-]{36})\/preview/i)?.[1]
+    : null;
 
   const copy = async () => {
     try {
@@ -72,6 +75,20 @@ export default function MessageItem({ message }) {
           </p>
         )}
         <Markdown content={content} />
+        {motionGraphicId && (
+          <div className="mt-4 overflow-hidden rounded-xl border border-border/70 bg-card/60">
+            <iframe
+              title="Motion graphic preview"
+              src={`/api/files/${motionGraphicId}/preview`}
+              sandbox=""
+              loading="lazy"
+              className="h-64 w-full bg-white"
+            />
+            <a href={`/api/files/${motionGraphicId}`} className="block border-t border-border/70 px-3 py-2 text-xs font-medium text-primary hover:underline">
+              Download motion graphic
+            </a>
+          </div>
+        )}
       </div>
       <button
         type="button"

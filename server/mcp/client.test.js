@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { listMcpTools, validateMcpHeaders, validateMcpUrl } from './client.js'
+import { callMcpTool, createPinnedLookup, listMcpTools, validateMcpHeaders, validateMcpUrl } from './client.js'
 
 const publicLookup = async () => [{ address: '93.184.216.34', family: 4 }]
 
@@ -17,6 +17,18 @@ test('MCP custom headers accept encrypted credential values but reject unsafe tr
   assert.deepEqual(validateMcpHeaders({ 'X-API-Key': 'private-value' }), { 'X-API-Key': 'private-value' })
   assert.throws(() => validateMcpHeaders({ Host: '127.0.0.1' }), /blocked or invalid/)
   assert.throws(() => validateMcpHeaders({ 'X-API-Key': 'one', 'x-api-key': 'two' }), /blocked or invalid/)
+})
+
+test('pinned MCP lookup supports Node single-address and all-address callbacks', async () => {
+  const lookup = createPinnedLookup([{ address: '93.184.216.34', family: 4 }])
+  const single = await new Promise((resolve, reject) => {
+    lookup('mcp.example', {}, (error, address, family) => error ? reject(error) : resolve({ address, family }))
+  })
+  const all = await new Promise((resolve, reject) => {
+    lookup('mcp.example', { all: true }, (error, addresses) => error ? reject(error) : resolve(addresses))
+  })
+  assert.deepEqual(single, { address: '93.184.216.34', family: 4 })
+  assert.deepEqual(all, [{ address: '93.184.216.34', family: 4 }])
 })
 
 test('Streamable HTTP client initializes a session and classifies MCP tools generically', async () => {
@@ -57,6 +69,36 @@ test('Streamable HTTP client initializes a session and classifies MCP tools gene
     url: 'https://mcp.example.com/mcp',
     requestImpl,
     lookup: publicLookup,
+  })
+
+  test('fake MCP server completes an initialized tools/call request', async () => {
+    const methods = []
+    const requestImpl = async ({ body, method }) => {
+      if (method === 'DELETE') return { status: 200, headers: {}, body: '' }
+      if (!body) return { status: 202, headers: {}, body: '' }
+      const request = JSON.parse(body)
+      methods.push(request.method)
+      if (request.method === 'notifications/initialized') {
+        return { status: 202, headers: {}, body: '' }
+      }
+      const result = request.method === 'initialize'
+        ? { protocolVersion: '2025-03-26', capabilities: {}, serverInfo: { name: 'fake', version: '1' } }
+        : { content: [{ type: 'text', text: `hello ${request.params.arguments.name}` }] }
+      return {
+        status: 200,
+        headers: request.method === 'initialize' ? { 'mcp-session-id': 'session-call' } : {},
+        body: JSON.stringify({ jsonrpc: '2.0', id: request.id, result }),
+      }
+    }
+    const result = await callMcpTool({
+      url: 'https://mcp.example.com/mcp',
+      toolName: 'greet',
+      input: { name: 'Biz' },
+      requestImpl,
+      lookup: publicLookup,
+    })
+    assert.deepEqual(result.content, [{ type: 'text', text: 'hello Biz' }])
+    assert.deepEqual(methods, ['initialize', 'notifications/initialized', 'tools/call'])
   })
 
   assert.deepEqual(tools.map(({ name, requiresApproval }) => ({ name, requiresApproval })), [

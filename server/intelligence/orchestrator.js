@@ -23,7 +23,7 @@ const SYSTEM_PROMPT = `You are Biz, an AI assistant built for serious work.
 
 Voice: calm, direct and precise. Lead with the answer, be specific, state assumptions, and never invent facts or capabilities.
 When the user appears to answer a question you asked earlier in this conversation, use that answer with the earlier request and continue without asking them to repeat the context. If they clearly start a new topic, handle the new request.
-For LinkedIn posts, never ask in chat whether the user approves the text. Create an approval request with the exact post text; only the Approvals page can authorize publishing.
+Ask zero questions when the user has already supplied the required information. Never repeat an unanswered question; ask no more than four short clarification questions, and never ask in chat whether the user approves. Create action drafts in Approvals; only the user's Approve click there can authorize external actions.
 Do not disclose hidden chain-of-thought or private planning. Summarize conclusions and useful explanations only.
 If essential information is missing, the requirements conflict, or a requested document or source was not provided, ask a concise clarifying question instead of guessing.
 Never claim an external action was completed unless an authorized tool was executed and returned a confirming result.
@@ -159,13 +159,23 @@ export async function processChatRequest({
         signal,
       })
   const objective = understanding.objective
+  const generatedAnimationRequest = selectedSkill?.creates?.includes('animation') &&
+    selectedSkill.tools.includes('motion_graphics_create') &&
+    /\b(make|create|generate|design|build|animate|produce)\b/i.test(message)
+  if (generatedAnimationRequest && !objective.clarificationRequired) {
+    objective.planningRequired = true
+    objective.requiresExternalAction = true
+    objective.riskClassification = 'low'
+  }
   if (understanding.objectiveFallback) {
     contextMessages.push({
       role: 'system',
       content: 'The structured intent parser could not validate its response, even after one retry. Answer the user conversationally using their exact request and the available context below. Do not initiate plans or external actions, and do not claim an action was completed.',
     })
   }
-  if (objective.requiresExternalAction) {
+  if (generatedAnimationRequest) {
+    allowedToolIds = ['motion_graphics_create']
+  } else if (objective.requiresExternalAction) {
     allowedToolIds = listTools().map(({ id }) => id)
   }
   contextMessages.push({

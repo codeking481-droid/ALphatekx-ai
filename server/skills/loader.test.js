@@ -6,6 +6,7 @@ import path from 'node:path'
 import { registerFileTools } from '../tools/file-tools.js'
 import { registerWebSearchTool } from '../tools/web-search.js'
 import { registerSkillCreateTool } from './skill-create.js'
+import { registerMotionGraphicsTool } from '../tools/motion-graphics.js'
 import {
   getSkillAllowedTools,
   matchSkill,
@@ -17,16 +18,25 @@ import {
 registerWebSearchTool()
 registerFileTools()
 registerSkillCreateTool()
+registerMotionGraphicsTool()
 
 const sampleRoot = new URL('../../skills/', import.meta.url)
 
 test('bundled example and creator skills meet the strict SKILL.md contract', async () => {
-  for (const name of ['example-sell-skinsnap', 'example-manage-linkedin', 'create-skill']) {
+  for (const name of ['example-sell-skinsnap', 'example-manage-linkedin', 'create-skill', 'motion-graphics']) {
     const markdown = await readFile(new URL(`${name}/SKILL.md`, sampleRoot), 'utf8')
     const skill = parseSkillMarkdown(markdown)
     assert.equal(skill.name, name)
     assert.ok(skill.body.includes('## What not to do'))
   }
+})
+
+test('motion graphics skill declares animation output without executable scripts', async () => {
+  const markdown = await readFile(new URL('motion-graphics/SKILL.md', sampleRoot), 'utf8')
+  const skill = parseSkillMarkdown(markdown)
+  assert.deepEqual(skill.creates, ['file', 'animation'])
+  assert.deepEqual(skill.tools, ['motion_graphics_create'])
+  assert.match(skill.body, /never execute uploaded or generated scripts/i)
 })
 
 test('skill matching chooses the strongest enabled description match and ignores disabled skills', () => {

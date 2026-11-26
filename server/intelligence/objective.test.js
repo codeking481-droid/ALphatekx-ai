@@ -207,6 +207,33 @@ test('execution-only details permit a labeled draft but require clarification be
     }],
     riskClassification: 'high',
   })
+
+  test('clarifications are capped at four and never ask for chat approval', () => {
+    const missingInformation = [
+      ...Array.from({ length: 6 }, (_value, index) => ({
+        item: `detail ${index}`,
+        reason: 'A required detail is missing.',
+        requiredFor: 'drafting',
+        clarificationQuestion: `What is detail ${index}?`,
+        safeAssumption: '',
+      })),
+      {
+        item: 'approval',
+        reason: 'Approval happens in Approvals.',
+        requiredFor: 'drafting',
+        clarificationQuestion: 'Has the user approved this?',
+        safeAssumption: '',
+      },
+    ]
+    const decision = evaluateClarification({
+      missingInformation,
+      ambiguities: [],
+      assumptions: [],
+      riskClassification: 'low',
+    })
+    assert.equal(decision.clarificationQuestions.length, 4)
+    assert.equal(decision.clarificationQuestions.some((question) => /approved/i.test(question)), false)
+  })
   const decision = evaluateClarification(spec)
   const validated = parseObjectiveSpec(JSON.stringify(spec))
 

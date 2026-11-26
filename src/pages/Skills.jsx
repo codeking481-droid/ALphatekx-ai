@@ -41,9 +41,10 @@ export default function Skills() {
       const result = await api.skills.install(file, options);
       const skillName = result.skill?.name || result.approval?.name || file.name;
       const tools = result.skill?.tools || result.approval?.tools || [];
+      const supportCount = result.supportingFilesCount || options.supportingFiles?.length || 0;
       const success = result.status === "pending_approval"
         ? `“${skillName}” needs approval before it can be installed.`
-        : `Skill ${skillName} uploaded ✅ - Tools: ${tools.length ? tools.join(", ") : "none"} - Now available in chat.`;
+        : `Skill ${skillName} uploaded ✅ - Tools: ${tools.length ? tools.join(", ") : "none"}${supportCount ? ` - Supporting files: ${supportCount} (scripts are never run)` : ""} - Now available in chat.`;
       setNotice([success, ...(result.warnings || [])].join("\n"));
       await refresh();
     } catch (requestError) {
@@ -74,13 +75,26 @@ export default function Skills() {
     const relativePath = skillFile.webkitRelativePath || skillFile.name;
     const parts = relativePath.split("/").filter(Boolean);
     const fallbackName = parts.length > 1 ? parts[parts.length - 2] : skillFile.name.replace(/\.md$/i, "");
-    const allIgnoredFiles = files
-      .filter((file) => file !== skillFile)
-      .map((file) => file.webkitRelativePath || file.name);
+    const skillRoot = parts.slice(0, -1).join("/");
+    const supportingFiles = [];
+    const ignored = [];
+    for (const file of files) {
+      if (file === skillFile) continue;
+      const filePath = file.webkitRelativePath || file.name;
+      const relativePath = filePath.startsWith(`${skillRoot}/`) ? filePath.slice(skillRoot.length + 1) : "";
+      if (/^(scripts|references|assets)\/.+/i.test(relativePath)) supportingFiles.push({ file, path: relativePath });
+      else ignored.push(filePath);
+    }
+    if (supportingFiles.length > 8 || supportingFiles.some(({ file }) => file.size > 2 * 1024 * 1024) ||
+      supportingFiles.reduce((sum, { file }) => sum + file.size, 0) > 4 * 1024 * 1024) {
+      setError("A skill folder can include up to 8 supporting files and 4 MiB total (2 MiB per file).");
+      return;
+    }
+    const allIgnoredFiles = ignored;
     const ignoredFiles = allIgnoredFiles.length > 20
       ? [...allIgnoredFiles.slice(0, 19), `${allIgnoredFiles.length - 19} additional files`]
       : allIgnoredFiles;
-    await uploadSkill(skillFile, { fallbackName, ignoredFiles });
+    await uploadSkill(skillFile, { fallbackName, ignoredFiles, supportingFiles });
   };
 
   const setEnabled = async (skill) => {
@@ -165,7 +179,7 @@ export default function Skills() {
       </header>
 
       <p className="mb-6 rounded-xl border border-border/70 bg-card/60 px-4 py-3 text-xs leading-5 text-muted-foreground">
-        Upload a <code>SKILL.md</code>, ZIP, or folder containing one. Only the Markdown is installed; supporting files are ignored and never executed. Skills are isolated per account, and existing permissions and approvals still apply.
+        Upload a <code>SKILL.md</code>, ZIP, or folder containing one. The <code>scripts/</code>, <code>references/</code>, and <code>assets/</code> folders are stored as inert supporting files; scripts are never executed. Skills are isolated per account, and existing permissions and approvals still apply.
       </p>
 
       {error && <div role="alert" className="mb-4 rounded-xl border border-destructive/25 bg-destructive/[0.06] px-4 py-3 text-sm text-destructive">{error}</div>}
@@ -191,6 +205,12 @@ export default function Skills() {
                     <span className="rounded-full border border-border px-2 py-0.5 text-[10px] text-muted-foreground">{skill.source}</span>
                   </div>
                   <p className="mt-2 text-sm leading-6 text-muted-foreground">{skill.description}</p>
+                  <div className="mt-3 flex flex-wrap items-center gap-1.5">
+                    <span className="mr-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">What it can create</span>
+                    {(skill.creates || ["text"]).map((type) => (
+                      <span key={type} className="rounded-full border border-primary/20 bg-primary/[0.05] px-2 py-0.5 text-[10px] capitalize text-primary">{type}</span>
+                    ))}
+                  </div>
                   <div className="mt-3 flex flex-wrap gap-1.5">
                     {skill.tools.length
                       ? skill.tools.map((tool) => <span key={tool} className="rounded-md bg-muted/70 px-2 py-1 font-mono text-[10px] text-muted-foreground">{tool}</span>)

@@ -27,6 +27,7 @@ import { decideApproval } from '../tools/executor.js'
 import { getTool, parseApprovalDescription } from '../tools/registry.js'
 import { registerWebSearchTool } from '../tools/web-search.js'
 import { registerFileTools } from '../tools/file-tools.js'
+import { registerMotionGraphicsTool } from '../tools/motion-graphics.js'
 import { registerSkillCreateTool } from '../skills/skill-create.js'
 import { extractSkillUpload, MAX_SKILL_UPLOAD_BYTES } from '../skills/archive.js'
 import { normalizeSkillUpload } from '../skills/loader.js'
@@ -59,6 +60,7 @@ import {
   withUserMcpTools,
   refreshMcpServer,
   removeMcpServer,
+  setMcpToolEnabled,
 } from '../mcp/registry.js'
 import {
   listSupportedApiKeyProviders,
@@ -71,12 +73,13 @@ const app = express()
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_FILE_BYTES, files: 1 } })
 const skillUpload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: MAX_SKILL_UPLOAD_BYTES, files: 1, fields: 2, fieldSize: 4096 },
+  limits: { fileSize: MAX_SKILL_UPLOAD_BYTES, files: 9, fields: 3, fieldSize: 4096 },
 })
 const chatRateLimit = createRateLimiter({ limit: 10, windowMs: 60_000 })
 registerWebSearchTool()
 registerLinkedInTools()
 registerFileTools()
+registerMotionGraphicsTool()
 registerSkillCreateTool()
 
 app.disable('x-powered-by')
@@ -163,6 +166,20 @@ app.get('/api/mcp/servers/:serverId/tools', requireUser, async (req, res, next) 
     res.json(await getMcpServerTools({
       userId: req.user.id,
       serverId: req.params.serverId,
+      database: pool,
+    }))
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.patch('/api/mcp/servers/:serverId/tools/:toolName', requireUser, requireObjectBody, async (req, res, next) => {
+  try {
+    res.json(await setMcpToolEnabled({
+      userId: req.user.id,
+      serverId: req.params.serverId,
+      toolName: req.params.toolName,
+      enabled: req.body.enabled,
       database: pool,
     }))
   } catch (error) {
@@ -341,6 +358,28 @@ app.get('/api/files/:fileId', requireUser, async (req, res, next) => {
       'Content-Type': file.mime_type,
       'Content-Length': file.size_bytes,
       'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(file.original_name)}`,
+      'X-Content-Type-Options': 'nosniff',
+      'Cache-Control': 'private, no-store',
+    })
+
+    file.stream.on('error', next)
+    file.stream.pipe(res)
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.get('/api/files/:fileId/preview', requireUser, async (req, res, next) => {
+  try {
+    if (!isUuid(req.params.fileId)) return res.status(400).json({ error: 'The file ID is invalid.' })
+    const file = await getOwnedFile({ userId: req.user.id, fileId: req.params.fileId })
+    if (!file) return res.status(404).json({ error: 'File not found.' })
+    if (file.mime_type !== 'text/html') return res.status(415).json({ error: 'Only HTML files can be previewed.' })
+    res.set({
+      'Content-Type': 'text/html; charset=utf-8',
+      'Content-Length': file.size_bytes,
+      'Content-Disposition': 'inline',
+      'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:; base-uri 'none'; form-action 'none'; frame-ancestors 'self'",
       'X-Content-Type-Options': 'nosniff',
       'Cache-Control': 'private, no-store',
     })
@@ -762,22 +801,32 @@ app.get('/api/skills', requireUser, async (req, res, next) => {
   }
 })
 
-app.post('/api/skills/install', requireUser, skillUpload.single('skill'), async (req, res, next) => {
+app.post('/api/skills/install', requireUser, skillUpload.fields([{ name: 'skill', maxCount: 1 }, { name: 'supportingFiles', maxCount: 8 }]), async (req, res, next) => {
   try {
-    if (!req.file) return res.status(400).json({ error: 'Upload a SKILL.md file or a ZIP containing one.' })
-    const extracted = extractSkillUpload(req.file)
+    const skillFile = req.files?.skill?.[0]
+    if (!skillFile) return res.status(400).json({ error: 'Upload a SKILL.md file or a ZIP containing one.' })
+    const extracted = extractSkillUpload(skillFile)
     const fallbackName = typeof req.body.skill_name === 'string' ? req.body.skill_name : extracted.fallbackName
     const markdown = normalizeSkillUpload(extracted.markdown, fallbackName)
     const extraFiles = parseIgnoredSkillFiles(req.body.ignored_files)
     const ignoredFiles = [...extracted.ignoredFiles, ...extraFiles].slice(0, 20)
     const ignoredFileCount = extracted.ignoredFileCount + extraFiles.length
+    const uploadedSupport = req.files?.supportingFiles || []
+    const supportingPaths = parseSupportingSkillPaths(req.body.supporting_paths, uploadedSupport.length)
+    if (extracted.supportingFiles.length && uploadedSupport.length) {
+      return res.status(400).json({ error: 'Choose a ZIP upload or a folder upload, not both.' })
+    }
+    const supportingFiles = extracted.supportingFiles.length
+      ? extracted.supportingFiles
+      : uploadedSupport.map((file, index) => ({ path: supportingPaths[index], content: file.buffer }))
     const warnings = ignoredFileCount
       ? [`Ignored unknown files: ${ignoredFiles.join(', ')}${ignoredFileCount > ignoredFiles.length ? ` and ${ignoredFileCount - ignoredFiles.length} more` : ''}`]
       : []
-    const result = await installSkill({ userId: req.user.id, markdown, database: pool, source: 'upload' })
+    const result = await installSkill({ userId: req.user.id, markdown, supportingFiles, database: pool, source: 'upload' })
     res.status(result.status === 'pending_approval' ? 202 : result.status === 'installed' ? 201 : 200).json({
       ...result,
       warnings,
+      supportingFilesCount: supportingFiles.length,
     })
   } catch (error) {
     next(error)
@@ -980,6 +1029,21 @@ function parseIgnoredSkillFiles(value) {
     throw Object.assign(new Error('Folder upload metadata is invalid. Please select the folder again.'), { status: 400 })
   }
   return files.map((file) => file.replace(/[\u0000-\u001f]/g, '').slice(0, 200))
+}
+
+function parseSupportingSkillPaths(value, fileCount) {
+  if (!fileCount) return []
+  let paths
+  try {
+    paths = JSON.parse(value)
+  } catch {
+    throw Object.assign(new Error('Skill supporting-file metadata is invalid. Select the folder again.'), { status: 400 })
+  }
+  if (!Array.isArray(paths) || paths.length !== fileCount ||
+    paths.some((item) => typeof item !== 'string' || item.length > 512)) {
+    throw Object.assign(new Error('Skill supporting-file metadata is invalid. Select the folder again.'), { status: 400 })
+  }
+  return paths
 }
 
 export default app

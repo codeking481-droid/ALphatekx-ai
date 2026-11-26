@@ -121,6 +121,22 @@ export default function Connections() {
     window.location.assign("/api/linkedin/connect");
   };
 
+  const setMcpToolEnabled = async (server, tool) => {
+    setMcpBusy(true);
+    setMcpError("");
+    try {
+      const updated = await api.mcp.setToolEnabled(server.id, tool.name, !tool.enabled);
+      setVisibleTools((current) => current?.serverId === server.id
+        ? { ...current, items: current.items.map((item) => item.name === tool.name ? { ...item, enabled: updated.enabled } : item) }
+        : current);
+      setMcpNotice(`${tool.name} is ${updated.enabled ? "enabled" : "disabled"} for chat.`);
+    } catch (requestError) {
+      setMcpError(requestError.message || "MCP tool setting couldn't be changed.");
+    } finally {
+      setMcpBusy(false);
+    }
+  };
+
   const disconnectLinkedIn = async () => {
     setBusy(true);
     setError("");
@@ -172,6 +188,9 @@ export default function Connections() {
       setMcpServers((current) => current.map((item) => item.id === server.id ? updated : item));
       setMcpNotice(`${server.name} is reachable; ${updated.toolsCount} tools are available.`);
     } catch (requestError) {
+      setMcpServers((current) => current.map((item) => item.id === server.id
+        ? { ...item, status: "failed", lastError: requestError.message || "The server could not be reached." }
+        : item));
       setMcpError(requestError.message || `${server.name} couldn't be reached.`);
     } finally {
       setMcpBusy(false);
@@ -391,8 +410,8 @@ export default function Connections() {
                 <div className="min-w-0">
                   <p className="text-sm font-medium">{server.name}</p>
                   <p className="mt-1 break-all text-xs text-muted-foreground">{server.url}</p>
-                  <p className="mt-1 text-xs text-emerald-600">
-                    Connected · {server.toolsCount} tools{server.hasApiKey ? " · API key saved" : ""}
+                  <p className={`mt-1 text-xs ${server.status === "failed" ? "text-destructive" : "text-emerald-600"}`}>
+                    {server.status === "failed" ? `Failed · ${server.lastError || "Connection test failed."}` : `Connected · ${server.toolsCount} tools`}{server.hasApiKey ? " · API key saved" : ""}
                     {server.customHeaderNames?.length ? ` · headers: ${server.customHeaderNames.join(", ")}` : ""}
                   </p>
                 </div>
@@ -417,6 +436,17 @@ export default function Connections() {
                         <span className="rounded-full border border-border px-2 py-0.5 text-[10px] text-muted-foreground">
                           {tool.requiresApproval ? "Approval required" : "Read-only"}
                         </span>
+                        <button
+                          type="button"
+                          role="switch"
+                          aria-checked={tool.enabled}
+                          aria-label={`${tool.enabled ? "Disable" : "Enable"} ${tool.name}`}
+                          disabled={mcpBusy}
+                          onClick={() => setMcpToolEnabled(server, tool)}
+                          className={`ml-auto relative h-5 w-9 rounded-full transition-colors disabled:opacity-50 ${tool.enabled ? "bg-primary" : "bg-muted"}`}
+                        >
+                          <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition-transform ${tool.enabled ? "translate-x-[18px]" : "translate-x-0.5"}`} />
+                        </button>
                       </div>
                       <p className="mt-1 text-xs text-muted-foreground">{tool.description}</p>
                     </div>

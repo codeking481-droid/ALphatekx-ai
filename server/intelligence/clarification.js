@@ -20,8 +20,12 @@ export function evaluateClarification(spec) {
     if (!assumption.safeForDrafting) clarificationQuestions.push(assumption.clarificationQuestion.trim())
   }
   if (['high', 'critical'].includes(spec.riskClassification)) executionQuestions.push(HIGH_RISK_CONFIRMATION)
-  const questions = unique(clarificationQuestions)
-  const beforeExecution = unique(executionQuestions)
+  const questions = unique(clarificationQuestions
+    .filter((question) => !asksForApprovalInChat(question))
+    .slice(0, 4))
+  const beforeExecution = unique(executionQuestions
+    .filter((question) => !asksForApprovalInChat(question))
+    .slice(0, 4))
   return {
     clarificationRequired: questions.length > 0,
     clarificationQuestions: questions,
@@ -31,5 +35,9 @@ export function evaluateClarification(spec) {
 }
 
 function unique(values) {
-  return [...new Set(values.filter(Boolean))]
+  return [...new Set(values.filter((value) => typeof value === 'string' && value.trim()).map((value) => value.trim()))]
+}
+
+function asksForApprovalInChat(question) {
+  return /\b(?:has|have|did)\s+(?:the\s+)?user\s+approv(?:e|ed|al)\b|\bask(?:ing)?\s+(?:the\s+)?user\s+(?:to\s+)?approv(?:e|al)\b/i.test(question)
 }

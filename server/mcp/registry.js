@@ -25,7 +25,9 @@ export async function loadUserMcpTools({ userId, database, callTool = callMcpToo
       version: row.credential_key_version,
     }))
     if (!Array.isArray(server.tools)) return []
-    return server.tools.map((tool) => createMcpTool(server, tool, callTool))
+    return server.tools
+      .filter((tool) => tool.enabled !== false)
+      .map((tool) => createMcpTool(server, tool, callTool))
   })
 }
 
@@ -44,6 +46,8 @@ export async function connectMcpServer({ userId, name, url, apiKey = '', headers
     apiKey: secret,
     headers: safeHeaders,
     tools,
+    connectionStatus: 'connected',
+    lastError: null,
     lastTestedAt: new Date().toISOString(),
   }
   const sealed = encryptCredential(JSON.stringify(credentials))
@@ -64,16 +68,66 @@ export async function listMcpServers({ userId, database }) {
 
 export async function refreshMcpServer({ userId, serverId, database }) {
   const server = await getMcpServer({ userId, serverId, database })
-  const tools = await listMcpTools({ url: server.url, apiKey: server.apiKey, headers: server.headers })
-  const updated = { ...server, tools, lastTestedAt: new Date().toISOString() }
+  let refreshedTools
+  try {
+    refreshedTools = await listMcpTools({ url: server.url, apiKey: server.apiKey, headers: server.headers })
+  } catch (error) {
+    const updated = {
+      ...server,
+      connectionStatus: 'failed',
+      lastError: error.message || 'The server could not be reached.',
+      lastTestedAt: new Date().toISOString(),
+    }
+    await storeMcpServer({ userId, serverId, credentials: updated, database })
+    throw Object.assign(new Error(`${server.name}: ${updated.lastError}`), { status: 502, cause: error })
+  }
+  const previousTools = new Map((server.tools || []).map((tool) => [tool.name, tool.enabled !== false]))
+  const tools = refreshedTools.map((tool) => ({ ...tool, enabled: previousTools.get(tool.name) ?? true }))
+  const updated = {
+    ...server,
+    tools,
+    connectionStatus: 'connected',
+    lastError: null,
+    lastTestedAt: new Date().toISOString(),
+  }
   await storeMcpServer({ userId, serverId, credentials: updated, database })
   return publicServer(updated)
 }
 
 export async function getMcpServerTools({ userId, serverId, database }) {
   const server = await getMcpServer({ userId, serverId, database })
-  const tools = await listMcpTools({ url: server.url, apiKey: server.apiKey, headers: server.headers })
-  return { items: tools.map(({ name, description, requiresApproval }) => ({ name, description, requiresApproval })) }
+  let refreshedTools
+  try {
+    refreshedTools = await listMcpTools({ url: server.url, apiKey: server.apiKey, headers: server.headers })
+  } catch (error) {
+    const reason = error.message || 'The server could not be reached.'
+    await storeMcpServer({
+      userId,
+      serverId,
+      credentials: { ...server, connectionStatus: 'failed', lastError: reason, lastTestedAt: new Date().toISOString() },
+      database,
+    })
+    throw Object.assign(new Error(`${server.name}: ${reason}`), { status: 502, cause: error })
+  }
+  const enabledByName = new Map((server.tools || []).map((tool) => [tool.name, tool.enabled !== false]))
+  const tools = refreshedTools.map((tool) => ({ ...tool, enabled: enabledByName.get(tool.name) ?? true }))
+  await storeMcpServer({
+    userId,
+    serverId,
+    credentials: { ...server, tools, connectionStatus: 'connected', lastError: null, lastTestedAt: new Date().toISOString() },
+    database,
+  })
+  return { items: tools.map(({ name, description, requiresApproval, enabled }) => ({ name, description, requiresApproval, enabled })) }
+}
+
+export async function setMcpToolEnabled({ userId, serverId, toolName, enabled, database }) {
+  if (typeof enabled !== 'boolean') throw Object.assign(new Error('enabled must be a boolean.'), { status: 400 })
+  const server = await getMcpServer({ userId, serverId, database })
+  const tool = server.tools?.find((item) => item.name === toolName)
+  if (!tool) throw Object.assign(new Error('MCP tool was not found. Refresh the server tools and try again.'), { status: 404 })
+  tool.enabled = enabled
+  await storeMcpServer({ userId, serverId, credentials: server, database })
+  return { name: tool.name, enabled: tool.enabled }
 }
 
 export async function removeMcpServer({ userId, serverId, database }) {
@@ -154,7 +208,8 @@ function createMcpTool(server, tool, callTool) {
           input,
         })
       } catch (cause) {
-        throw new Error(`${server.name} MCP is not reachable or rejected the request. Check the URL and tools in Connections.`, { cause })
+        if (/^MCP tool reported an execution error/i.test(cause.message || '')) throw cause
+        throw new Error(`MCP server ${server.name} is offline: ${cause.message || 'the request was rejected'}. Check its status in Connections.`, { cause })
       }
     },
     verifyResult: (result) => Boolean(result && result.isError !== true),
@@ -167,7 +222,8 @@ function publicServer(server) {
     name: server.name,
     url: server.url,
     toolsCount: Array.isArray(server.tools) ? server.tools.length : 0,
-    status: 'connected',
+    status: server.connectionStatus || 'connected',
+    ...(server.lastError ? { lastError: server.lastError } : {}),
     hasApiKey: Boolean(server.apiKey),
     customHeaderNames: Object.keys(server.headers || {}),
     ...(server.lastTestedAt ? { lastTestedAt: server.lastTestedAt } : {}),

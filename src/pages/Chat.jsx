@@ -5,6 +5,7 @@ import { Loader2, X } from "lucide-react";
 import ChatWelcome from "@/components/chat/ChatWelcome";
 import MessageList from "@/components/chat/MessageList";
 import Composer from "@/components/chat/Composer";
+import QuestionCard, { getClarificationQuestions } from "@/components/chat/QuestionCard";
 import VoiceMode from "@/components/voice/VoiceMode";
 import { api } from "@/api/client";
 import { isUiPreview } from "@/lib/ui-preview";
@@ -221,6 +222,8 @@ export default function Chat() {
   );
 
   const isEmpty = !loading && messages.length === 0;
+  const latestAssistant = [...messages].reverse().find((message) => message.role === "assistant");
+  const clarificationQuestions = latestAssistant ? getClarificationQuestions(latestAssistant.content) : [];
 
   const composer = (
     <Composer
@@ -281,7 +284,12 @@ export default function Chat() {
                   <Loader2 className="h-5 w-5 animate-spin" strokeWidth={1.8} />
                 </div>
               ) : (
-                <MessageList messages={messages} thinking={sending} showAds={showAds} />
+                <MessageList
+                  messages={messages}
+                  thinking={sending}
+                  showAds={showAds}
+                  hiddenMessageId={clarificationQuestions.length ? latestAssistant.id : null}
+                />
               )}
             </div>
           </div>
@@ -303,6 +311,9 @@ export default function Chat() {
                 <div className="mb-2 rounded-xl border border-primary/20 bg-primary/[0.04] px-3 py-2 text-xs text-muted-foreground">
                   This task needs your approval. <Link className="font-medium text-primary hover:underline" to="/approvals">Review approvals</Link>
                 </div>
+              )}
+              {clarificationQuestions.length > 0 && !sending && (
+                <QuestionCard key={latestAssistant.id} questions={clarificationQuestions} onAnswer={(answer) => handleSend(answer, [])} />
               )}
               {error && (
                 <div className="mb-2.5 rounded-xl border border-destructive/25 bg-destructive/[0.06] px-3 py-2 text-[12.5px] text-destructive">

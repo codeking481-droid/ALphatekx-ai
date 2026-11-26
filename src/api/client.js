@@ -63,6 +63,10 @@ export const api = {
       body: { name, url, api_key: apiKey, headers },
     }),
     tools: (id) => request(`/api/mcp/servers/${encodeURIComponent(id)}/tools`),
+    setToolEnabled: (id, name, enabled) => request(
+      `/api/mcp/servers/${encodeURIComponent(id)}/tools/${encodeURIComponent(name)}`,
+      { method: 'PATCH', body: { enabled } },
+    ),
     test: (id) => request(`/api/mcp/servers/${encodeURIComponent(id)}/test`, { method: 'POST', body: {} }),
     disconnect: (id) => request(`/api/mcp/servers/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   },
@@ -95,13 +99,17 @@ export const api = {
   },
   skills: {
     list: () => request('/api/skills'),
-    /** @param {File} file @param {{ fallbackName?: string, ignoredFiles?: string[] }} [options] */
+    /** @param {File} file @param {{ fallbackName?: string, ignoredFiles?: string[], supportingFiles?: Array<{ file: File, path: string }> }} [options] */
     install: (file, options = {}) => {
-      const { fallbackName, ignoredFiles } = options
+      const { fallbackName, ignoredFiles, supportingFiles } = options
       const body = new FormData()
       body.append('skill', file)
       if (fallbackName) body.append('skill_name', fallbackName)
       if (ignoredFiles?.length) body.append('ignored_files', JSON.stringify(ignoredFiles.slice(0, 20)))
+      if (supportingFiles?.length) {
+        body.append('supporting_paths', JSON.stringify(supportingFiles.map(({ path }) => path)))
+        supportingFiles.forEach(({ file: supportingFile }) => body.append('supportingFiles', supportingFile))
+      }
       return request('/api/skills/install', { method: 'POST', body })
     },
     setEnabled: (name, enabled) => request(`/api/skills/${encodeURIComponent(name)}`, {

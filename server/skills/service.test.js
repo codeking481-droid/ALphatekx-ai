@@ -7,7 +7,8 @@ import { registerFileTools } from '../tools/file-tools.js'
 import { getTool } from '../tools/registry.js'
 import { registerWebSearchTool } from '../tools/web-search.js'
 import { registerSkillCreateTool } from './skill-create.js'
-import { getUserSkillsDirectory, matchSkill, normalizeSkillUpload } from './loader.js'
+import { registerMotionGraphicsTool } from '../tools/motion-graphics.js'
+import { getAvailableSkills, getUserSkillsDirectory, matchSkill, normalizeSkillUpload } from './loader.js'
 import {
   decideSkillApproval,
   installSkill,
@@ -21,6 +22,7 @@ import {
 registerWebSearchTool()
 registerFileTools()
 registerSkillCreateTool()
+registerMotionGraphicsTool()
 
 const readerSkill = `---
 name: reader-helper
@@ -72,11 +74,36 @@ test('skill installs are isolated per user, enable only after validation, and ca
   }
 })
 
+test('supporting files are isolated with the skill and uploaded scripts remain inert', async () => {
+  const skillsDir = await mkdtemp(path.join(os.tmpdir(), 'alphatekx-skills-support-'))
+  const database = createDatabase()
+  const files = [
+    { path: 'scripts/build.js', content: Buffer.from('throw new Error("never run")') },
+    { path: 'references/brand.md', content: Buffer.from('Emerald and charcoal') },
+    { path: 'assets/logo.svg', content: Buffer.from('<svg></svg>') },
+  ]
+  try {
+    await installSkill({ userId: 'owner-a', markdown: readerSkill, supportingFiles: files, database, skillsDir })
+    const skillDirectory = path.join(getUserSkillsDirectory('owner-a', skillsDir), 'reader-helper')
+    for (const file of files) {
+      assert.deepEqual(await readFile(path.join(skillDirectory, ...file.path.split('/'))), file.content)
+    }
+    const [loaded] = await getAvailableSkills({ userId: 'owner-a', database, skillsDir })
+    assert.match(loaded.body, /Emerald and charcoal/)
+    assert.match(loaded.body, /scripts\/build\.js/)
+    assert.doesNotMatch(loaded.body, /throw new Error/)
+    assert.deepEqual(await listSkills({ userId: 'owner-b', database, skillsDir }), [])
+  } finally {
+    await rm(skillsDir, { recursive: true, force: true })
+  }
+})
+
 test('file-write skills remain uninstalled until their explicit approval is granted', async () => {
   const skillsDir = await mkdtemp(path.join(os.tmpdir(), 'alphatekx-skills-approval-'))
   const database = createDatabase()
   try {
-    const result = await installSkill({ userId: 'owner-a', markdown: writerSkill, database, skillsDir })
+    const supportingFiles = [{ path: 'assets/logo.txt', content: Buffer.from('brand asset') }]
+    const result = await installSkill({ userId: 'owner-a', markdown: writerSkill, supportingFiles, database, skillsDir })
     assert.equal(result.status, 'pending_approval')
     assert.equal(result.approval.action, 'install')
     assert.deepEqual(await listSkills({ userId: 'owner-a', database, skillsDir }), [])
@@ -93,6 +120,10 @@ test('file-write skills remain uninstalled until their explicit approval is gran
     const [installed] = await listSkills({ userId: 'owner-a', database, skillsDir })
     assert.equal(installed.enabled, true)
     assert.equal(installed.source, 'Uploaded')
+    assert.equal(
+      await readFile(path.join(getUserSkillsDirectory('owner-a', skillsDir), 'writer-helper', 'assets', 'logo.txt'), 'utf8'),
+      'brand asset',
+    )
     assert.equal(database.events.some(([userId, event]) => userId === 'owner-a' && event === 'skill.approval.approved'), true)
   } finally {
     await rm(skillsDir, { recursive: true, force: true })
@@ -235,6 +266,7 @@ function createDatabase() {
         action: values[2],
         markdown: values[3],
         source: values[4],
+        supporting_files: values[5] ? JSON.parse(values[5]) : [],
         status: 'pending',
       }
       requests.set(id, request)

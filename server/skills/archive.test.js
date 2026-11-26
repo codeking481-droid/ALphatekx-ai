@@ -12,7 +12,7 @@ test('skill uploads accept a single Markdown file and derive a fallback name', (
   assert.equal(result.ignoredFileCount, 0)
 })
 
-test('Claude-style ZIPs accept supporting files and report them as ignored', () => {
+test('Claude-style ZIPs retain supporting files as inert content', () => {
   const markdown = Buffer.from('---\nname: sample\n---\nbody')
   const archive = makeZip([
     { name: 'claude-skill/SKILL.md', content: markdown },
@@ -22,11 +22,10 @@ test('Claude-style ZIPs accept supporting files and report them as ignored', () 
   const result = extractSkillUpload({ originalname: 'claude-skill.zip', buffer: archive })
   assert.equal(result.markdown, markdown.toString())
   assert.equal(result.fallbackName, 'claude-skill')
-  assert.deepEqual(result.ignoredFiles, [
-    'claude-skill/scripts/setup.py',
-    'claude-skill/references/guide.md',
-  ])
-  assert.equal(result.ignoredFileCount, 2)
+  assert.deepEqual(result.ignoredFiles, [])
+  assert.equal(result.ignoredFileCount, 0)
+  assert.deepEqual(result.supportingFiles.map(({ path }) => path), ['scripts/setup.py', 'references/guide.md'])
+  assert.equal(result.supportingFiles[0].content.toString(), 'print("ignored")')
 })
 
 test('ZIP uploads locate SKILL.md nested in multiple folders', () => {

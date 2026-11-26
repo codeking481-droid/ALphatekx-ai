@@ -5,6 +5,7 @@ import { registerTool } from '../tools/registry.js'
 import { registerWebSearchTool } from '../tools/web-search.js'
 import { registerFileTools } from '../tools/file-tools.js'
 import { registerSkillCreateTool } from '../skills/skill-create.js'
+import { registerMotionGraphicsTool } from '../tools/motion-graphics.js'
 import { registerLinkedInTools } from '../linkedin/tools.js'
 import { processChatRequest } from './orchestrator.js'
 
@@ -15,6 +16,7 @@ const PROJECT_ID = 'project-1'
 registerWebSearchTool()
 registerFileTools()
 registerSkillCreateTool()
+registerMotionGraphicsTool()
 registerLinkedInTools()
 
 function objective(overrides = {}) {
