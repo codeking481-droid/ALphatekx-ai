@@ -28,6 +28,8 @@ export function formatFallbackTrace(trace) {
   const providerNames = uniqueIssues.map((item) => {
     if (item.status === 'skipped') return `${item.name} not configured`
     if (isFreeQuotaFailure(item.provider, item.upstreamStatus)) return `${item.name} free quota used`
+    if (item.upstreamStatus === 429) return `${item.name} rate-limited (429)`
+    if (item.upstreamStatus === 403) return `${item.name} access denied (403)`
     const status = item.upstreamStatus ? ` ${item.upstreamStatus}` : ''
     return `${item.name} failed${status}`
   })
@@ -37,7 +39,7 @@ export function formatFallbackTrace(trace) {
   if (used.status === 'used' && uniqueIssues.some((item) => item.status === 'failed' && item.provider === used.provider)) {
     return `${lead}; ${used.name} recovered after retry.`
   }
-  return `${lead}; tried ${used.name} fallback.`
+  return `${lead}; ${used.name} fallback succeeded.`
 }
 
 function isFreeQuotaFailure(provider, upstreamStatus) {

@@ -41,7 +41,7 @@ test('Groq 500 falls back to Workers AI and records provider use', async () => {
   assert.equal(result.result.text, 'Workers AI answer')
   assert.equal(result.fallbackUsed, true)
   assert.match(formatFallbackTrace(result.fallbackTrace), /Groq failed 500/)
-  assert.match(formatFallbackTrace(result.fallbackTrace), /Cloudflare Workers AI fallback/)
+  assert.match(formatFallbackTrace(result.fallbackTrace), /Cloudflare Workers AI fallback succeeded/)
 })
 
 test('a same-provider retry is reported as recovery, not as a fallback', async () => {
@@ -64,7 +64,7 @@ test('a same-provider retry is reported as recovery, not as a fallback', async (
   ], { database: { query: async () => ({ rowCount: 1 }) } })
 
   assert.equal(result.fallbackUsed, false)
-  assert.equal(formatFallbackTrace(result.fallbackTrace), 'Groq failed 429; Groq recovered after retry.')
+  assert.equal(formatFallbackTrace(result.fallbackTrace), 'Groq rate-limited (429); Groq recovered after retry.')
 })
 
 test('a short Retry-After is respected before retrying Groq', async () => {
@@ -137,7 +137,7 @@ test('unconfigured providers are identified when the chain advances past them', 
   assert.equal(result.provider.id, 'openrouter')
   assert.equal(result.fallbackUsed, true)
   assert.match(formatFallbackTrace(result.fallbackTrace), /Cloudflare Workers AI not configured/)
-  assert.match(formatFallbackTrace(result.fallbackTrace), /tried OpenRouter fallback/)
+  assert.match(formatFallbackTrace(result.fallbackTrace), /OpenRouter fallback succeeded/)
 })
 
 test('provider quota failures skip retries and advance in the configured free-tier order', async () => {
@@ -223,7 +223,22 @@ test('configured AI Worker 1 is tried after Gemini and before the local response
   assert.deepEqual(calls, ['groq', 'workers_ai', 'openrouter', 'gemini', 'worker1'])
   assert.equal(result.provider.id, 'worker1')
   assert.equal(result.result.text, 'Worker 1 generated answer')
-  assert.match(formatFallbackTrace(result.fallbackTrace), /tried AI Worker 1 fallback/)
+  assert.match(formatFallbackTrace(result.fallbackTrace), /AI Worker 1 fallback succeeded/)
+})
+
+test('fallback trace distinguishes provider failures from the successful fallback', () => {
+  const message = formatFallbackTrace([
+    { name: 'Groq', provider: 'groq', status: 'failed', upstreamStatus: 429 },
+    { name: 'Cloudflare Workers AI', provider: 'workers_ai', status: 'skipped' },
+    { name: 'OpenRouter', provider: 'openrouter', status: 'failed', upstreamStatus: 429 },
+    { name: 'Google Gemini', provider: 'gemini', status: 'failed', upstreamStatus: 403 },
+    { name: 'AI Worker 1', provider: 'worker1', status: 'used' },
+  ])
+
+  assert.equal(
+    message,
+    'Groq rate-limited (429), Cloudflare Workers AI not configured, OpenRouter rate-limited (429), Google Gemini access denied (403); AI Worker 1 fallback succeeded.',
+  )
 })
 
 test('ordinary text retries do not force a JSON response', async () => {
