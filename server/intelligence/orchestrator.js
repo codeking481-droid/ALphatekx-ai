@@ -190,7 +190,9 @@ export async function processChatRequest({
   })
   let activeProvider = understanding.provider
   let responseModel = understanding.model
-  let fallbackTraces = understanding.fallbackTrace ? [understanding.fallbackTrace] : []
+  let fallbackTraces = understanding.fallbackUsed && understanding.fallbackTrace
+    ? [understanding.fallbackTrace]
+    : []
   let planGraph = null
   let executionReport = null
   let reviewSummaries = []
@@ -219,7 +221,7 @@ export async function processChatRequest({
       },
     })
     planGraph = planning.planGraph
-    if (planning.fallbackTrace) fallbackTraces.push(planning.fallbackTrace)
+    if (planning.fallbackUsed && planning.fallbackTrace) fallbackTraces.push(planning.fallbackTrace)
     activeProvider = planning.provider
     responseModel = planning.model
     const workflowContext = {
@@ -339,7 +341,7 @@ export async function processChatRequest({
     )
     activeProvider = completion.provider
     responseModel = completion.result.model || activeProvider.model
-    if (completion.fallbackTrace) fallbackTraces.push(completion.fallbackTrace)
+    if (completion.fallbackUsed && completion.fallbackTrace) fallbackTraces.push(completion.fallbackTrace)
     const evaluation = evaluateProviderResult(completion.result)
     if (!evaluation.accepted) throw new Error('The configured AI provider returned an empty response.')
     reply = completion.result.text.trim()

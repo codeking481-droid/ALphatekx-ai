@@ -14,10 +14,11 @@ export const localFallbackProvider = {
 
 export function formatFallbackTrace(trace) {
   if (!trace?.length) return ''
-  const failures = trace.filter((item) => item.status === 'failed')
-  if (!failures.length) return ''
-  const uniqueFailures = [...new Map(failures.map((item) => [item.provider, item])).values()]
-  const providerNames = uniqueFailures.map((item) => {
+  const issues = trace.filter((item) => item.status === 'failed' || item.status === 'skipped')
+  if (!issues.length) return ''
+  const uniqueIssues = [...new Map(issues.map((item) => [item.provider, item])).values()]
+  const providerNames = uniqueIssues.map((item) => {
+    if (item.status === 'skipped') return `${item.name} not configured`
     if (isFreeQuotaFailure(item.provider, item.upstreamStatus)) return `${item.name} free quota used`
     const status = item.upstreamStatus ? ` ${item.upstreamStatus}` : ''
     return `${item.name} failed${status}`
@@ -25,6 +26,9 @@ export function formatFallbackTrace(trace) {
   const used = trace.at(-1)
   const lead = providerNames.join(', ')
   if (used.status === 'local') return `${lead}; tried the local fallback.`
+  if (used.status === 'used' && uniqueIssues.some((item) => item.status === 'failed' && item.provider === used.provider)) {
+    return `${lead}; ${used.name} recovered after retry.`
+  }
   return `${lead}; tried ${used.name} fallback.`
 }
 
@@ -53,13 +57,22 @@ export async function invokeFallbackChain(registry, preferredProvider, messages,
     : [preferredProvider?.id, ...registry.list().filter((item) => item.available !== false).map((item) => item.id)].filter(Boolean)
   for (const id of candidateIds) {
     const provider = registry.get(id) || (preferredProvider?.id === id ? preferredProvider : null)
-    if (provider && provider.isAvailable !== false && !options.exclude?.includes(provider.id) &&
+    if (provider && !options.exclude?.includes(provider.id) &&
       !ordered.some((item) => item.id === provider.id)) {
       ordered.push(provider)
     }
   }
 
   for (const provider of ordered) {
+    if (provider.isAvailable === false) {
+      trace.push({
+        name: provider.name,
+        provider: provider.id,
+        status: 'skipped',
+        reason: 'not_configured',
+      })
+      continue
+    }
     for (let attempt = 1; attempt <= 2; attempt += 1) {
       const startedAt = Date.now()
       try {
@@ -97,7 +110,8 @@ export async function invokeFallbackChain(registry, preferredProvider, messages,
         return {
           provider,
           result,
-          fallbackUsed: trace.some((item) => item.status === 'failed'),
+          fallbackUsed: trace.some((item) => item.status === 'skipped') ||
+            trace.some((item) => item.status === 'failed' && item.provider !== provider.id),
           fallbackTrace: trace,
         }
       } catch (error) {
@@ -152,6 +166,7 @@ export async function invokeFallbackChain(registry, preferredProvider, messages,
   log('warn', 'ai.local_fallback.used', {
     provider: 'local-fallback',
     providersAttempted: trace.filter((item) => item.status === 'failed').map((item) => item.provider),
+    providersSkipped: trace.filter((item) => item.status === 'skipped').map((item) => item.provider),
   })
   return {
     provider: localFallbackProvider,
@@ -277,16 +292,19 @@ function createLocalTemplate(messages) {
   const quotedRequest = String(userMessage).trim().replace(/\s+/g, ' ').slice(0, 1200)
   if (/execution report|motion graphic html was created/i.test(prompt) && /\/api\/files\/[a-f0-9-]{36}/i.test(prompt)) {
     const fileUrl = /\/api\/files\/[a-f0-9-]{36}/i.exec(prompt)?.[0]
-    return `Main AI was down, I used fallback. I created the requested motion graphic with Biz's charcoal-and-emerald local template.\n\n[Preview the animation](${fileUrl}/preview) · [Download the HTML](${fileUrl})`
+    return `I created the requested motion graphic with Biz's charcoal-and-emerald local template.\n\n[Preview the animation](${fileUrl}/preview) · [Download the HTML](${fileUrl})`
+  }
+  if (/^(?:hi|hello|hey|good morning|good afternoon|good evening)[!. ]*$/i.test(quotedRequest)) {
+    return 'Hi! What can I help you with?'
   }
   return quotedRequest
-    ? `Main AI was down, I used fallback. I can still help with your request: "${quotedRequest}"`
-    : 'Main AI was down, I used a local fallback. Please tell me what you would like help with.'
+    ? `I can help with your request: "${quotedRequest}". What would you like to do next?`
+    : 'What would you like help with?'
 }
 
 function createLinkedInDraft(message) {
   return [
-    'Main AI was down, I used fallback. Here is a LinkedIn draft based on your request (not posted):',
+    'Here is a LinkedIn draft based on your request (not posted):',
     '',
     buildLinkedInDraftText(message),
   ].join('\n')

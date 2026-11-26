@@ -45,6 +45,52 @@ test('Groq 500 falls back to Workers AI and records provider use', async () => {
   assert.match(formatFallbackTrace(result.fallbackTrace), /Cloudflare Workers AI fallback/)
 })
 
+test('a same-provider retry is reported as recovery, not as a fallback', async () => {
+  let calls = 0
+  const groq = mockProvider('groq', 'Groq', () => {
+    calls += 1
+    if (calls === 1) {
+      throw new ProviderError('Rate limited', {
+        provider: 'groq',
+        retryable: true,
+        upstreamStatus: 429,
+        status: 503,
+      })
+    }
+    return { text: 'Recovered answer' }
+  })
+  const result = await invokeFallbackChain(mockRegistry([groq]), groq, [
+    { role: 'user', content: 'hello' },
+  ], { database: { query: async () => ({ rowCount: 1 }) } })
+
+  assert.equal(result.fallbackUsed, false)
+  assert.equal(formatFallbackTrace(result.fallbackTrace), 'Groq failed 429; Groq recovered after retry.')
+})
+
+test('unconfigured providers are identified when the chain advances past them', async () => {
+  const groq = mockProvider('groq', 'Groq', () => {
+    throw new ProviderError('Unauthorized', {
+      provider: 'groq',
+      retryable: false,
+      upstreamStatus: 401,
+      status: 502,
+    })
+  })
+  const workersAi = mockProvider('workers_ai', 'Cloudflare Workers AI', () => {
+    throw new Error('Unavailable providers must not be called.')
+  })
+  workersAi.isAvailable = false
+  const openrouter = mockProvider('openrouter', 'OpenRouter', () => ({ text: 'OpenRouter answer' }))
+  const result = await invokeFallbackChain(mockRegistry([groq, workersAi, openrouter]), groq, [
+    { role: 'user', content: 'hello' },
+  ], { database: { query: async () => ({ rowCount: 1 }) } })
+
+  assert.equal(result.provider.id, 'openrouter')
+  assert.equal(result.fallbackUsed, true)
+  assert.match(formatFallbackTrace(result.fallbackTrace), /Cloudflare Workers AI not configured/)
+  assert.match(formatFallbackTrace(result.fallbackTrace), /tried OpenRouter fallback/)
+})
+
 test('provider quota failures skip retries and advance in the configured free-tier order', async () => {
   const calls = []
   const groq = mockProvider('groq', 'Groq', () => {
@@ -141,7 +187,7 @@ test('Workers AI and Groq down use Local template', async () => {
   ], { database: { query: async () => ({ rowCount: 1 }) } })
 
   assert.equal(result.provider.id, 'local-fallback')
-  assert.match(result.result.text, /Main AI was down/)
+  assert.match(result.result.text, /motion graphics intro for Biz/)
   assert.equal(result.fallbackUsed, true)
 })
 
@@ -242,6 +288,14 @@ test('local fallback returns a LinkedIn draft instead of an unhelpful echo', asy
   assert.match(result.result.text, /renewable energy adoption/)
 })
 
+test('local fallback responds naturally to a greeting', async () => {
+  const result = await invokeFallbackChain(mockRegistry([]), null, [
+    { role: 'user', content: 'hi' },
+  ], { database: { query: async () => ({ rowCount: 1 }) } })
+
+  assert.equal(result.result.text, 'Hi! What can I help you with?')
+})
+
 test('provider failures return a useful local fallback', async () => {
   const down = (id, name) => mockProvider(id, name, () => {
     throw new ProviderError('Unavailable', { provider: id, retryable: true, upstreamStatus: 503, status: 503 })
@@ -253,7 +307,7 @@ test('provider failures return a useful local fallback', async () => {
   ], { database: { query: async () => ({ rowCount: 1 }) } })
 
   assert.equal(result.provider.id, 'local-fallback')
-  assert.match(result.result.text, /Main AI was down/)
+  assert.match(result.result.text, /motion graphics intro for Biz/)
   assert.match(formatFallbackTrace(result.fallbackTrace), /local fallback/)
 })
 
