@@ -45,6 +45,33 @@ test('objective understanding requests JSON schema output when the provider supp
     database,
   })
 
+  test('schedule ambiguity asks its single required question without invoking a model', async () => {
+    let calls = 0
+    const provider = {
+      id: 'schedule',
+      model: 'test-model',
+      capabilities: { structuredOutput: false },
+      async generate() {
+        calls += 1
+        return { text: '' }
+      },
+    }
+    const result = await understandObjective({ list: () => [], get: () => provider }, provider, {
+      message: 'Post about Biz for one week',
+      scheduleIntent: {
+        mode: 'recurring',
+        clarificationQuestion: 'How many posts per week, and what time each day?',
+      },
+      userId: 'user-1',
+      database: { async query() { return { rowCount: 1 } } },
+    })
+
+    assert.equal(calls, 0)
+    assert.equal(result.objective.clarificationRequired, true)
+    assert.deepEqual(result.objective.clarificationQuestions, ['How many posts per week, and what time each day?'])
+    assert.equal(result.objective.requiresExternalAction, false)
+  })
+
   assert.deepEqual(request.jsonSchema, OBJECTIVE_SPEC_SCHEMA)
   assert.equal(result.objective.goal, 'Prepare the requested answer.')
   assert.equal(result.objective.clarificationRequired, false)

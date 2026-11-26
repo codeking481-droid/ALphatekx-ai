@@ -51,6 +51,20 @@ import {
   searchLinkedInPeople,
 } from '../linkedin/service.js'
 import { registerLinkedInTools } from '../linkedin/tools.js'
+import {
+  connectMcpServer,
+  getMcpServerTools,
+  listMcpServers,
+  withUserMcpTools,
+  refreshMcpServer,
+  removeMcpServer,
+} from '../mcp/registry.js'
+import {
+  listSupportedApiKeyProviders,
+  listUserApiKeys,
+  removeUserApiKey,
+  saveUserApiKey,
+} from '../settings/byok.js'
 
 const app = express()
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_FILE_BYTES, files: 1 } })
@@ -116,11 +130,71 @@ app.delete('/api/linkedin/disconnect', requireUser, async (req, res, next) => {
   }
 })
 
+app.get('/api/mcp/servers', requireUser, async (req, res, next) => {
+  try {
+    res.json({ items: await listMcpServers({ userId: req.user.id, database: pool }) })
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.post('/api/mcp/servers', requireUser, requireObjectBody, async (req, res, next) => {
+  try {
+    const server = await connectMcpServer({
+      userId: req.user.id,
+      name: req.body.name,
+      url: req.body.url,
+      apiKey: req.body.api_key || '',
+      headers: req.body.headers || {},
+      database: pool,
+    })
+    res.status(201).json(server)
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.get('/api/mcp/servers/:serverId/tools', requireUser, async (req, res, next) => {
+  try {
+    res.json(await getMcpServerTools({
+      userId: req.user.id,
+      serverId: req.params.serverId,
+      database: pool,
+    }))
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.post('/api/mcp/servers/:serverId/test', requireUser, async (req, res, next) => {
+  try {
+    res.json(await refreshMcpServer({
+      userId: req.user.id,
+      serverId: req.params.serverId,
+      database: pool,
+    }))
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.delete('/api/mcp/servers/:serverId', requireUser, async (req, res, next) => {
+  try {
+    if (!await removeMcpServer({ userId: req.user.id, serverId: req.params.serverId, database: pool })) {
+      return res.status(404).json({ error: 'MCP server was not found in Connections.' })
+    }
+    res.status(204).end()
+  } catch (error) {
+    next(error)
+  }
+})
+
 app.post('/api/linkedin/post', requireUser, requireObjectBody, async (req, res, next) => {
   try {
     const result = await createLinkedInPost({
       userId: req.user.id,
       text: req.body.text,
+      schedule: req.body.schedule,
       approved: req.body.approved,
       approvalId: req.body.approvalId,
     })
@@ -276,6 +350,14 @@ app.get('/api/files/:fileId', requireUser, async (req, res, next) => {
 app.post('/api/chat', requireUser, chatRateLimit, requireObjectBody, async (req, res, next) => {
   try {
     const message = typeof req.body.message === 'string' ? req.body.message.trim().slice(0, 8000) : ''
+    const timezone = typeof req.body.timezone === 'string' && req.body.timezone.length <= 100
+      ? req.body.timezone
+      : 'UTC'
+    try {
+      new Intl.DateTimeFormat('en', { timeZone: timezone })
+    } catch {
+      return res.status(400).json({ error: 'The timezone is invalid.' })
+    }
     let projectId = req.body.project_id ?? null
     const conversationId = req.body.conversation_id ?? null
     if (projectId !== null && !isUuid(projectId)) {
@@ -324,6 +406,7 @@ app.post('/api/chat', requireUser, chatRateLimit, requireObjectBody, async (req,
       message,
       attachments,
       requestId: req.requestId,
+      timezone,
     })
     res.status(202).json({ job_id: job.id, status: job.status, progress: job.progress })
   } catch (error) {
@@ -535,6 +618,51 @@ app.patch('/api/settings', requireUser, requireObjectBody, async (req, res, next
   }
 })
 
+app.get('/api/settings/keys', requireUser, async (req, res, next) => {
+  try {
+    res.json({
+      providers: listSupportedApiKeyProviders(),
+      ...(await listUserApiKeys({ userId: req.user.id, database: pool })),
+    })
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.put('/api/settings/keys', requireUser, requireObjectBody, async (req, res, next) => {
+  try {
+    res.json(await saveUserApiKey({
+      userId: req.user.id,
+      providerId: req.body.provider,
+      apiKey: req.body.api_key,
+      database: pool,
+    }))
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.delete('/api/settings/keys/:provider', requireUser, async (req, res, next) => {
+  try {
+    if (!await removeUserApiKey({ userId: req.user.id, providerId: req.params.provider, database: pool })) {
+      return res.status(404).json({ error: 'That API key was not found.' })
+    }
+    res.status(204).end()
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.get('/api/settings/plan', requireUser, async (req, res, next) => {
+  try {
+    const { rows } = await pool.query('SELECT plan FROM user_plans WHERE user_id = $1', [req.user.id])
+    const { hasOwnKey } = await listUserApiKeys({ userId: req.user.id, database: pool })
+    res.json({ plan: rows[0]?.plan || 'free', hasOwnKey })
+  } catch (error) {
+    next(error)
+  }
+})
+
 app.post('/api/projects', requireUser, requireObjectBody, async (req, res, next) => {
   try {
     const name = typeof req.body.name === 'string' ? req.body.name.trim() : ''
@@ -575,24 +703,26 @@ app.post('/api/tasks', requireUser, requireObjectBody, async (req, res, next) =>
 
 app.get('/api/approvals', requireUser, async (req, res, next) => {
   try {
-    const { rows } = await pool.query(
-      `SELECT a.id, a.tool_execution_id, a.description, a.expires_at, a.created_at,
-              e.tool_id, e.input AS tool_input, j.id AS job_id, j.conversation_id
-       FROM approval_requests a
-       JOIN tool_executions e ON e.id = a.tool_execution_id
-       LEFT JOIN jobs j ON j.agent_run_id = e.agent_run_id AND j.approval_id = a.id
-       WHERE a.user_id = $1 AND a.status = 'pending' AND a.expires_at > now()
-       ORDER BY a.created_at`,
-      [req.user.id],
-    )
-    res.json({
-      items: rows.map(({ tool_input, ...row }) => ({
-        ...row,
-        description: parseApprovalDescription(row.description)?.description || 'This approval record is stale and requires review.',
-        tool_name: getTool(row.tool_id)?.name || row.tool_id,
-        connector: getTool(row.tool_id)?.connector || 'unknown',
-        ...(row.tool_id === 'file_write' ? { input: parseStoredObject(tool_input) } : {}),
-      })),
+    await withUserMcpTools({ userId: req.user.id, database: pool }, async () => {
+      const { rows } = await pool.query(
+        `SELECT a.id, a.tool_execution_id, a.description, a.expires_at, a.created_at,
+                e.tool_id, e.input AS tool_input, j.id AS job_id, j.conversation_id
+         FROM approval_requests a
+         JOIN tool_executions e ON e.id = a.tool_execution_id
+         LEFT JOIN jobs j ON j.agent_run_id = e.agent_run_id AND j.approval_id = a.id
+         WHERE a.user_id = $1 AND a.status = 'pending' AND a.expires_at > now()
+         ORDER BY a.created_at`,
+        [req.user.id],
+      )
+      res.json({
+        items: rows.map(({ tool_input, ...row }) => ({
+          ...row,
+          description: parseApprovalDescription(row.description)?.description || 'This approval record is stale and requires review.',
+          tool_name: getTool(row.tool_id)?.name || row.tool_id,
+          connector: getTool(row.tool_id)?.connector || 'unknown',
+          ...(row.tool_id === 'file_write' ? { input: parseStoredObject(tool_input) } : {}),
+        })),
+      })
     })
   } catch (error) {
     next(error)
@@ -609,7 +739,7 @@ app.get('/api/tool-permissions', requireUser, async (req, res, next) => {
 
 app.delete('/api/tool-permissions/:toolId', requireUser, async (req, res, next) => {
   try {
-    if (!/^[a-z0-9][a-z0-9._-]{0,63}$/i.test(req.params.toolId)) {
+    if (!/^[a-z0-9][a-z0-9._:-]{0,127}$/i.test(req.params.toolId)) {
       return res.status(400).json({ error: 'The tool ID is invalid.' })
     }
     const revoked = await revokeToolPermissionGrant({ userId: req.user.id, toolId: req.params.toolId })
@@ -694,14 +824,14 @@ app.post('/api/approvals/:approvalId', requireUser, requireObjectBody, async (re
     if (req.body.remember_for_workspace !== undefined && typeof req.body.remember_for_workspace !== 'boolean') {
       return res.status(400).json({ error: 'remember_for_workspace must be a boolean.' })
     }
-    const approvalResult = await decideApproval({
+    const approvalResult = await withUserMcpTools({ userId: req.user.id, database: pool }, () => decideApproval({
       userId: req.user.id,
       approvalId: req.params.approvalId,
       decision: req.body.decision,
       requestId: req.requestId,
       deferExecution: true,
       rememberForWorkspace: req.body.remember_for_workspace === true,
-    })
+    }))
     const execution = await pool.query(
       `SELECT e.agent_run_id, r.input->'continuation' AS continuation
        FROM approval_requests a

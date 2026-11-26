@@ -76,7 +76,7 @@ export const OBJECTIVE_SPEC_SCHEMA = {
   required: OBJECTIVE_KEYS,
 }
 
-export function buildObjectiveMessages({ message, contextMessages = [], attachmentContext = '' }) {
+export function buildObjectiveMessages({ message, contextMessages = [], attachmentContext = '', scheduleIntent = null }) {
   const tools = listTools().map(({ id, description }) => ({ id, description }))
   return [
     {
@@ -95,6 +95,7 @@ export function buildObjectiveMessages({ message, contextMessages = [], attachme
         'Set riskClassification to exactly one of: low, medium, high, critical. For a greeting or casual pleasantry with no substantive request, set the goal to replying conversationally, leave all lists empty, use low risk, and set planningRequired and requiresExternalAction to false.',
         'Set requiresExternalAction only when the user asks Biz to cause an external side effect, not when they ask for advice, a draft, or a plan.',
         'Set planningRequired to true whenever requiresExternalAction is true so the action can be planned and paused for approval before execution.',
+        ...(scheduleIntent ? [`Application-parsed posting time intent (authoritative for timing only): ${JSON.stringify(scheduleIntent)}. If it contains clarificationQuestion, ask only that question and do not plan an action. For mode "now", do not schedule. For mode "scheduled" or "recurring", preserve the given timezone and time exactly.`] : []),
         `Available tools (reference only; do not invent tools): ${JSON.stringify(tools)}`,
       ].join('\n'),
     },
@@ -110,13 +111,24 @@ export async function understandObjective(registry, provider, {
   message,
   contextMessages = [],
   attachmentContext = '',
+  scheduleIntent = null,
   userId,
   requestId = null,
   database,
   signal = null,
 }) {
+  if (scheduleIntent?.clarificationQuestion) {
+    return {
+      objective: createScheduleClarificationObjective(scheduleIntent.clarificationQuestion),
+      provider,
+      model: provider.model,
+      usage: null,
+      fallbackUsed: false,
+      objectiveFallback: false,
+    }
+  }
   const request = {
-    messages: buildObjectiveMessages({ message, contextMessages, attachmentContext }),
+    messages: buildObjectiveMessages({ message, contextMessages, attachmentContext, scheduleIntent }),
     ...(provider.capabilities?.structuredOutput ? { jsonSchema: OBJECTIVE_SPEC_SCHEMA } : {}),
   }
   const completion = await invokeWithProviderFallback(registry, provider, request, { userId, requestId, database, signal })
@@ -192,6 +204,30 @@ function createSafeConversationalObjective(message) {
     instructions: [],
     successCriteria: ['Address the current user request clearly.'],
     missingInformation,
+    ambiguities: [],
+    assumptions: [],
+    riskClassification: 'low',
+    planningRequired: false,
+    requiresExternalAction: false,
+  }))
+}
+
+function createScheduleClarificationObjective(question) {
+  return parseObjectiveSpec(JSON.stringify({
+    goal: 'Clarify the requested LinkedIn posting schedule before drafting or scheduling.',
+    deliverables: ['One necessary schedule clarification'],
+    resources: [],
+    scopeConstraints: [],
+    timeConstraints: [],
+    instructions: ['Do not create a post or schedule until the user answers.'],
+    successCriteria: ['Ask only the necessary schedule question.'],
+    missingInformation: [{
+      item: 'Posting schedule',
+      reason: 'The requested cadence, time, or content reuse is not yet clear.',
+      requiredFor: 'drafting',
+      clarificationQuestion: question,
+      safeAssumption: '',
+    }],
     ambiguities: [],
     assumptions: [],
     riskClassification: 'low',

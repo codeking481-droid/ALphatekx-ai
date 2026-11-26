@@ -1,18 +1,19 @@
 import React from "react";
 import { Link, NavLink, useLocation } from "react-router-dom";
-import { History, Plus, Settings2, Plug, ShieldCheck, Sparkles, Brain, FolderKanban } from "lucide-react";
+import { History, Plus, Search, Settings2, Plug, ShieldCheck, Sparkles, Brain, FolderKanban } from "lucide-react";
 import Brand from "@/components/Brand";
 import useCurrentUser from "@/hooks/useCurrentUser";
 import { cn } from "@/lib/utils";
 
 const ITEMS = [
-  { label: "Settings", to: "/settings", icon: Settings2 },
-  { label: "Memory", to: "/memory", icon: Brain },
+  { label: "Search", to: "/history#search", icon: Search },
   { label: "Projects", to: "/projects", icon: FolderKanban },
   { label: "History", to: "/history", icon: History },
   { label: "Connections", to: "/connections", icon: Plug },
   { label: "Approvals", to: "/approvals", icon: ShieldCheck },
   { label: "Skills", to: "/skills", icon: Sparkles },
+  { label: "Memory", to: "/memory", icon: Brain },
+  { label: "Settings", to: "/settings", icon: Settings2 },
 ];
 
 function initials(name) {
@@ -39,22 +40,26 @@ export default function SidebarNav({ onNavigate }) {
       <Link
         to="/"
         onClick={onNavigate}
-        className="mt-7 flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-[13.5px] font-medium text-foreground/85 transition-colors hover:bg-accent hover:text-foreground"
+        className="mt-7 flex items-center gap-3 rounded-[10px] px-3 py-3 text-[15px] font-medium text-foreground/85 transition-colors hover:bg-accent hover:text-foreground"
       >
         <Plus className="h-4 w-4 text-muted-foreground" strokeWidth={1.8} />
         New chat
       </Link>
 
-      <nav className="mt-5 space-y-0.5 border-t border-border/60 pt-4">
+      <nav className="mt-5 space-y-1 border-t border-border/60 pt-4">
         {ITEMS.map(({ label, to, icon: Icon }) => {
-          const active = location.pathname === to;
+          const active = to === "/history#search"
+            ? location.pathname === "/history" && location.hash === "#search"
+            : to === "/history"
+              ? location.pathname === "/history" && location.hash !== "#search"
+              : location.pathname === to;
           return (
             <NavLink
               key={to}
               to={to}
               onClick={onNavigate}
               className={cn(
-                "flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-[13.5px] transition-colors",
+                "flex items-center gap-3 rounded-[10px] px-3 py-3 text-[15px] transition-colors",
                 active
                   ? "bg-accent text-foreground"
                   : "text-muted-foreground hover:bg-accent/60 hover:text-foreground"

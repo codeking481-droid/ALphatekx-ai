@@ -1,9 +1,11 @@
 import { createHash } from 'node:crypto'
+import { AsyncLocalStorage } from 'node:async_hooks'
 
 const tools = new Map()
+const scopedTools = new AsyncLocalStorage()
 
 export function registerTool(tool) {
-  if (typeof tool?.id !== 'string' || !/^[a-z0-9][a-z0-9._-]{0,63}$/i.test(tool.id) ||
+  if (typeof tool?.id !== 'string' || !/^[a-z0-9][a-z0-9._:-]{0,127}$/i.test(tool.id) ||
     typeof tool.description !== 'string' || !tool.description.trim() ||
     (tool.name !== undefined && (typeof tool.name !== 'string' || !tool.name.trim() || tool.name.length > 100)) ||
     (tool.connector !== undefined && (typeof tool.connector !== 'string' || !/^[a-z0-9][a-z0-9_-]{0,63}$/i.test(tool.connector))) ||
@@ -15,6 +17,7 @@ export function registerTool(tool) {
     (tool.verifyResult !== undefined && typeof tool.verifyResult !== 'function') ||
     (tool.describeAction !== undefined && typeof tool.describeAction !== 'function') ||
     (tool.auditDetails !== undefined && typeof tool.auditDetails !== 'function') ||
+    (tool.normalizeInput !== undefined && typeof tool.normalizeInput !== 'function') ||
     (tool.approvalScope !== undefined && (typeof tool.approvalScope !== 'string' || !tool.approvalScope.trim() || tool.approvalScope.length > 512)) ||
     typeof tool.validate !== 'function' || !Array.isArray(tool.permissions) || !tool.permissions.length ||
     tool.permissions.some((permission) => typeof permission !== 'string' || !permission)) {
@@ -50,11 +53,22 @@ function humanizeToolId(id) {
 }
 
 export function getTool(id) {
-  return tools.get(id)
+  return scopedTools.getStore()?.get(id) || tools.get(id)
 }
 
 export function listTools() {
-  return [...tools.values()].map(({ execute, validate, verifyResult, describeAction, auditDetails, approvalScope, ...tool }) => tool)
+  const available = new Map(tools)
+  for (const [id, tool] of scopedTools.getStore() || []) available.set(id, tool)
+  return [...available.values()].map(({ execute, validate, verifyResult, describeAction, auditDetails, normalizeInput, approvalScope, ...tool }) => tool)
+}
+
+export function withScopedTools(toolsForScope, operation) {
+  const current = new Map(scopedTools.getStore() || [])
+  for (const tool of toolsForScope) {
+    if (current.has(tool.id) || tools.has(tool.id)) throw new Error(`Tool "${tool.id}" is already registered in this scope.`)
+    current.set(tool.id, tool)
+  }
+  return scopedTools.run(current, operation)
 }
 
 export function getToolActionFingerprint(tool, input) {
@@ -74,6 +88,7 @@ export function getToolActionFingerprint(tool, input) {
       verifyResult: tool.verifyResult?.toString() || null,
       describeAction: tool.describeAction?.toString() || null,
       auditDetails: tool.auditDetails?.toString() || null,
+      normalizeInput: tool.normalizeInput?.toString() || null,
       input,
     }))
     .digest('hex')

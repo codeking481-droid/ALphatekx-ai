@@ -1058,6 +1058,57 @@ test('LinkedIn post requests create an approval with the exact preview before ex
   assert.match(result.reply, /Approvals/)
 })
 
+test('parsed LinkedIn schedule is added to tool input before creating approval', async () => {
+  const database = createDatabase()
+  const { registry, calls } = createRegistry({
+    handlers: {
+      'mock-primary': {
+        understanding: () => ({
+          text: JSON.stringify(objective({
+            goal: 'Schedule a LinkedIn post.',
+            deliverables: ['Scheduled LinkedIn post'],
+            planningRequired: true,
+            requiresExternalAction: true,
+          })),
+        }),
+        planning: () => ({
+          text: JSON.stringify({
+            tasks: [task('publish-linkedin-post', {
+              type: 'tool',
+              requiredInputs: [{
+                kind: 'tool_output',
+                description: 'LinkedIn post publishing result.',
+                toolId: 'linkedin_post',
+              }],
+              requiredCapability: 'tool_execution',
+              specialistRole: 'execution',
+              toolInput: { text: 'Biz is live.' },
+            })],
+          }),
+        }),
+      },
+    },
+  })
+
+  const result = await request({
+    database,
+    registry,
+    message: 'Schedule a LinkedIn post for tomorrow at 10am: Biz is live.',
+    skillResolver: async () => [],
+  })
+
+  const submittedInput = database.state.toolExecutions[0].input
+  assert.equal(result.execution.status, 'awaiting_approval')
+  assert.equal(submittedInput.text, 'Biz is live.')
+  assert.equal(submittedInput.schedule.mode, 'scheduled')
+  assert.equal(submittedInput.schedule.timezone, 'UTC')
+  assert.ok(Date.parse(submittedInput.schedule.scheduledAt) > Date.now())
+  assert.equal(database.state.approvals[0].status, 'pending')
+  assert.ok(calls.find(({ stage }) => stage === 'understanding').messages.some(({ content }) =>
+    content.includes('business owners, creators, and busy people') &&
+    content.includes('without asking for its audience or basic features')))
+})
+
 test('malformed planner fallback creates a complete LinkedIn approval task', async () => {
   const database = createDatabase()
   const { registry, calls } = createRegistry({

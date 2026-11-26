@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { randomBytes } from 'node:crypto'
 import { encryptLinkedInToken } from './crypto.js'
-import { createLinkedInPost, replyToLinkedInComment } from './service.js'
+import { createLinkedInPost, replyToLinkedInComment, scheduleLinkedInPosts, validatePostSchedule } from './service.js'
 
 const userId = 'linkedin-test-user'
 const encryptionKey = randomBytes(32).toString('base64')
@@ -132,4 +132,127 @@ test('LinkedIn reply cannot be published with a forged approval boolean', async 
     { status: 403 },
   )
   assert.equal(upstreamCalls, 0)
+})
+
+test('LinkedIn schedule validation requires explicit recurring text reuse or distinct drafts', () => {
+  assert.throws(() => validatePostSchedule({
+    mode: 'scheduled',
+    scheduledAt: '2026-03-10T17:00:00.000Z',
+    timezone: 'Mars/Olympus',
+  }), /timezone is invalid/)
+  assert.throws(() => validatePostSchedule({
+    mode: 'recurring',
+    scheduledAt: '2026-03-10T17:00:00.000Z',
+    timezone: 'UTC',
+    count: 7,
+    intervalMinutes: 1440,
+    sameText: false,
+  }), /one text for each date/)
+
+  assert.deepEqual(validatePostSchedule({
+    mode: 'recurring',
+    scheduledAt: '2026-03-10T17:00:00.000Z',
+    timezone: 'America/Los_Angeles',
+    count: 7,
+    intervalMinutes: 1440,
+    sameText: true,
+  }), {
+    mode: 'recurring',
+    scheduledAt: '2026-03-10T17:00:00.000Z',
+    timezone: 'America/Los_Angeles',
+    count: 7,
+    intervalMinutes: 1440,
+    sameText: true,
+  })
+})
+
+test('approved scheduled posts are queued without calling LinkedIn immediately', async () => {
+  const database = createDatabase()
+  const inserts = []
+  database.connect = async () => ({
+    async query(sql, values = []) {
+      if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') return { rowCount: 0, rows: [] }
+      if (sql.includes('INSERT INTO scheduled_linkedin_posts')) {
+        inserts.push(values)
+        return { rows: [{ id: `scheduled-${inserts.length}`, scheduled_for: values[4] }] }
+      }
+      throw new Error(`Unexpected client SQL: ${sql}`)
+    },
+    release() {},
+  })
+  let upstreamCalls = 0
+  const result = await scheduleLinkedInPosts({
+    userId,
+    text: 'Biz is live.',
+    schedule: {
+      mode: 'recurring',
+      scheduledAt: new Date(Date.now() + 2 * 60 * 60_000).toISOString(),
+      timezone: 'UTC',
+      count: 3,
+      intervalMinutes: 1440,
+      sameText: true,
+    },
+    database,
+    env,
+    fetchImpl: async () => { upstreamCalls += 1 },
+  })
+
+  assert.equal(result.scheduled, true)
+  assert.equal(result.count, 3)
+  assert.equal(inserts.length, 3)
+  assert.equal(upstreamCalls, 0)
+})
+
+test('LinkedIn scheduled posts keep the schedule bound to approval and do not publish immediately', async () => {
+  const database = createDatabase()
+  const inserts = []
+  database.connect = async () => ({
+    async query(sql, values = []) {
+      if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') return { rowCount: 0, rows: [] }
+      if (sql.includes('INSERT INTO scheduled_linkedin_posts')) {
+        inserts.push(values)
+        return { rows: [{ id: 'scheduled-1', scheduled_for: values[4] }] }
+      }
+      throw new Error(`Unexpected client SQL: ${sql}`)
+    },
+    release() {},
+  })
+  const schedule = {
+    mode: 'scheduled',
+    scheduledAt: new Date(Date.now() + 2 * 60 * 60_000).toISOString(),
+    timezone: 'UTC',
+  }
+  const preview = await createLinkedInPost({
+    userId,
+    text: 'Biz is launching.',
+    schedule,
+    approved: false,
+    database,
+    env,
+  })
+  assert.equal(preview.preview, true)
+
+  await assert.rejects(createLinkedInPost({
+    userId,
+    text: 'Biz is launching.',
+    schedule: { ...schedule, scheduledAt: new Date(Date.now() + 3 * 60 * 60_000).toISOString() },
+    approvalId: preview.approvalId,
+    approved: true,
+    database,
+    env,
+  }), { status: 409 })
+  assert.equal(inserts.length, 0)
+
+  const result = await createLinkedInPost({
+    userId,
+    text: preview.text,
+    schedule,
+    approvalId: preview.approvalId,
+    approved: true,
+    database,
+    env,
+  })
+  assert.equal(result.scheduled, true)
+  assert.equal(result.count, 1)
+  assert.equal(inserts.length, 1)
 })

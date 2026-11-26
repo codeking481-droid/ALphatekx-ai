@@ -1,7 +1,15 @@
 import React, { useState } from "react";
 import { Check, Copy, Download, FileText } from "lucide-react";
-import { BrandMark } from "@/components/Brand";
 import Markdown from "@/components/chat/Markdown";
+
+function displayContent(content) {
+  return String(content || "")
+    .replace(/^\s*(?:Used skill:.*|No skill - built-in only|Task task[_-]\d+.*|tool-task-\d+.*)\s*$/gim, "")
+    .replace(/\btool-task-\d+\b/gi, "Task")
+    .replace(/\bTask\s+task_\d+\b/gi, "Task")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
 
 function AttachmentChip({ file }) {
   return (
@@ -22,10 +30,11 @@ export default function MessageItem({ message }) {
   const [copied, setCopied] = useState(false);
   const isUser = message.role === "user";
   const attachments = message.attachments || [];
+  const content = isUser ? message.content || "" : displayContent(message.content);
 
   const copy = async () => {
     try {
-      await navigator.clipboard.writeText(message.content || "");
+      await navigator.clipboard.writeText(content);
       setCopied(true);
       setTimeout(() => setCopied(false), 1600);
     } catch {
@@ -36,7 +45,7 @@ export default function MessageItem({ message }) {
   if (isUser) {
     return (
       <div className="flex justify-end">
-        <div className="max-w-[90%] space-y-2 sm:max-w-[85%]">
+        <div className="max-w-[80%] space-y-2">
           {attachments.length > 0 && (
             <div className="flex flex-wrap justify-end gap-2">
               {attachments.map((file, index) => (
@@ -45,7 +54,7 @@ export default function MessageItem({ message }) {
             </div>
           )}
           {message.content && (
-            <div className="whitespace-pre-wrap rounded-2xl rounded-br-md border border-border/60 bg-secondary/80 px-3.5 py-2.5 text-[15px] leading-[1.65] text-foreground sm:px-4">
+            <div className="whitespace-pre-wrap rounded-2xl rounded-br-md border border-border/60 bg-secondary px-3.5 py-2.5 text-[16px] leading-[1.6] text-foreground sm:px-4">
               {message.content}
             </div>
           )}
@@ -55,22 +64,14 @@ export default function MessageItem({ message }) {
   }
 
   return (
-    <div className="group relative flex gap-3.5">
-      <span className="mt-[3px] flex h-6 w-6 shrink-0 items-center justify-center">
-        <BrandMark className="h-[17px] w-[17px]" />
-      </span>
-      <div className="min-w-0 flex-1 pt-px">
-        {Object.hasOwn(message, "skill") && (
-          <span className="mb-2 inline-flex rounded-full border border-border/70 bg-muted/50 px-2 py-0.5 text-[10px] text-muted-foreground">
-            {message.skill?.name ? `Used skill: ${message.skill.name}` : "No skill - built-in only"}
-          </span>
-        )}
+    <div className="group relative">
+      <div className="min-w-0 pt-px pr-8">
         {message.memoriesUsed?.length > 0 && (
           <p className="mb-2 text-[10px] text-muted-foreground">
             Using memories: {message.memoriesUsed.map((memory) => memory.content).join("; ")}
           </p>
         )}
-        <Markdown content={message.content} />
+        <Markdown content={content} />
       </div>
       <button
         type="button"

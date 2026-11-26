@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { Check, LogOut, Loader2, Monitor, Moon, Sun } from "lucide-react";
+import { Check, LogOut, Loader2, Monitor, Moon, Sun, Trash2 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { api } from "@/api/client";
 
@@ -22,6 +22,13 @@ export default function Settings() {
   const [error, setError] = useState("");
   const [settingsError, setSettingsError] = useState("");
   const [theme, setThemeChoice] = useState(getTheme());
+  const [keyProviders, setKeyProviders] = useState([]);
+  const [savedKeys, setSavedKeys] = useState([]);
+  const [keyInputs, setKeyInputs] = useState({});
+  const [keyBusy, setKeyBusy] = useState("");
+  const [keyError, setKeyError] = useState("");
+  const [keyNotice, setKeyNotice] = useState("");
+  const [plan, setPlan] = useState({ plan: "free", hasOwnKey: false });
 
   useEffect(() => {
     api.auth
@@ -43,6 +50,16 @@ export default function Settings() {
         }
       })
       .catch(() => setSettingsError("Your saved appearance settings couldn't be loaded."));
+  }, []);
+
+  useEffect(() => {
+    Promise.all([api.settings.keys(), api.settings.plan()])
+      .then(([keys, currentPlan]) => {
+        setKeyProviders(keys.providers || []);
+        setSavedKeys(keys.keys || []);
+        setPlan(currentPlan);
+      })
+      .catch(() => setKeyError("Your key and plan settings couldn't be loaded."));
   }, []);
 
   const saveProfile = async () => {
@@ -69,6 +86,42 @@ export default function Settings() {
       await api.settings.update({ theme: next });
     } catch (requestError) {
       setSettingsError(requestError.message || "Your appearance preference couldn't be saved.");
+    }
+  };
+
+  const saveKey = async (provider) => {
+    const apiKey = keyInputs[provider] || "";
+    if (!apiKey.trim() || keyBusy) return;
+    setKeyBusy(provider);
+    setKeyError("");
+    setKeyNotice("");
+    try {
+      const saved = await api.settings.saveKey({ provider, apiKey });
+      setSavedKeys((current) => [...current.filter((item) => item.provider !== provider), saved]);
+      setKeyInputs((current) => ({ ...current, [provider]: "" }));
+      setPlan((current) => ({ ...current, hasOwnKey: true }));
+      setKeyNotice(`${keyProviders.find((item) => item.id === provider)?.name || provider} key saved securely.`);
+    } catch (requestError) {
+      setKeyError(requestError.message || "The API key couldn't be saved.");
+    } finally {
+      setKeyBusy("");
+    }
+  };
+
+  const deleteKey = async (provider) => {
+    setKeyBusy(provider);
+    setKeyError("");
+    setKeyNotice("");
+    try {
+      await api.settings.deleteKey(provider);
+      const next = savedKeys.filter((item) => item.provider !== provider);
+      setSavedKeys(next);
+      setPlan((current) => ({ ...current, hasOwnKey: next.length > 0 }));
+      setKeyNotice("The saved key was removed.");
+    } catch (requestError) {
+      setKeyError(requestError.message || "The API key couldn't be removed.");
+    } finally {
+      setKeyBusy("");
     }
   };
 
@@ -155,6 +208,78 @@ export default function Settings() {
           })}
         </div>
         {settingsError && <p className="mt-3 text-[12.5px] text-destructive">{settingsError}</p>}
+      </Section>
+
+      <Section title="Your API keys (BYOK)" description="Keys are encrypted on the server and never shown again after saving.">
+        <div className="max-w-xl space-y-3">
+          {keyProviders.map((provider) => {
+            const existing = savedKeys.find((item) => item.provider === provider.id);
+            return (
+              <div key={provider.id} className="rounded-xl border border-border/70 p-3.5">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <p className="text-[13px] font-medium">{provider.name}</p>
+                    <p className="mt-1 text-[11px] text-muted-foreground">
+                      {existing ? `Saved key ending in ${existing.keySuffix}` : "No personal key saved"}
+                    </p>
+                  </div>
+                  {existing && (
+                    <button
+                      type="button"
+                      disabled={Boolean(keyBusy)}
+                      onClick={() => deleteKey(provider.id)}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-border px-2.5 py-1.5 text-xs text-muted-foreground hover:bg-accent disabled:opacity-50"
+                    >
+                      {keyBusy === provider.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+                      Remove
+                    </button>
+                  )}
+                </div>
+                <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+                  <input
+                    type="password"
+                    autoComplete="new-password"
+                    value={keyInputs[provider.id] || ""}
+                    onChange={(event) => setKeyInputs((current) => ({ ...current, [provider.id]: event.target.value }))}
+                    placeholder={`Paste your ${provider.name} API key`}
+                    className="h-10 min-w-0 flex-1 rounded-xl border border-border/80 bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground/70 focus:outline-none focus:ring-2 focus:ring-ring/20"
+                  />
+                  <button
+                    type="button"
+                    disabled={!keyInputs[provider.id]?.trim() || Boolean(keyBusy)}
+                    onClick={() => saveKey(provider.id)}
+                    className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-primary px-4 text-xs font-medium text-primary-foreground disabled:opacity-50"
+                  >
+                    {keyBusy === provider.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+                    Save key
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+          {keyError && <p role="alert" className="text-xs text-destructive">{keyError}</p>}
+          {keyNotice && <p role="status" className="text-xs text-emerald-600">{keyNotice}</p>}
+        </div>
+      </Section>
+
+      <Section title="Your MCP servers" description="Manage connected tools without duplicating their settings.">
+        <Link to="/connections" className="text-[13px] font-medium text-primary hover:underline">
+          Manage MCP servers in Connections
+        </Link>
+      </Section>
+
+      <Section title="Plan" description="Plan and billing controls are a foundation only; no payment is collected.">
+        <div className="max-w-xl rounded-xl border border-border/70 bg-card/60 p-4">
+          <p className="text-sm font-semibold capitalize">{plan.plan || "Free"} plan</p>
+          <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
+            {plan.plan === "pro"
+              ? "Pro is intended to use Biz's configured provider without ads. The plan flag is a placeholder; billing is not enabled yet."
+              : "Free uses the configured Biz provider when no personal API key is saved. Chat may show a quiet placeholder promotion."}
+          </p>
+          <p className="mt-2 text-[11px] text-muted-foreground">
+            {plan.hasOwnKey ? "A personal API key is active for AI requests." : "No personal API key is active."}
+          </p>
+        </div>
       </Section>
 
       <Section title="Memory" description="Review and manage the private facts and preferences Biz remembers.">

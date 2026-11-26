@@ -77,3 +77,17 @@ test('LinkedIn migration stores encrypted user credentials and short-lived appro
   assert.match(migration, /REFERENCES "user"\("id"\) ON DELETE CASCADE/)
   assert.doesNotMatch(migration, /\bDROP\s+(?:TABLE|COLUMN)|\bDELETE\s+FROM|\bTRUNCATE\b/i)
 })
+
+test('BYOK plan foundation and scheduled posts migrations are additive and user-scoped', async () => {
+  const plan = await readFile(new URL('./008_mcp_byok_plan.sql', import.meta.url), 'utf8')
+  const scheduledPosts = await readFile(new URL('./009_scheduled_linkedin_posts.sql', import.meta.url), 'utf8')
+  assert.match(plan, /CREATE TABLE IF NOT EXISTS user_plans/)
+  assert.match(plan, /plan TEXT NOT NULL DEFAULT 'free'/)
+  assert.match(plan, /REFERENCES "user"\("id"\) ON DELETE CASCADE/)
+  assert.match(scheduledPosts, /CREATE TABLE IF NOT EXISTS scheduled_linkedin_posts/)
+  assert.match(scheduledPosts, /REFERENCES tool_executions\(id\) ON DELETE SET NULL/)
+  assert.match(scheduledPosts, /CHECK \(status IN \('pending', 'publishing', 'published', 'failed', 'cancelled'\)\)/)
+  for (const migration of [plan, scheduledPosts]) {
+    assert.doesNotMatch(migration, /\bDROP\s+(?:TABLE|COLUMN)|\bDELETE\s+FROM|\bTRUNCATE\b/i)
+  }
+})

@@ -1,7 +1,7 @@
 import { pool } from '../db/pool.js'
 
-export async function submitChatJob({ userId, message, conversationId = null, projectId = null, attachments = [], requestId = null, database = pool }) {
-  const input = { message, conversation_id: conversationId, project_id: projectId, attachments, request_id: requestId }
+export async function submitChatJob({ userId, message, conversationId = null, projectId = null, attachments = [], requestId = null, timezone = 'UTC', database = pool }) {
+  const input = { message, conversation_id: conversationId, project_id: projectId, attachments, request_id: requestId, timezone }
   const { rows } = await database.query(
     `INSERT INTO jobs (user_id, status, input)
      VALUES ($1, 'queued', $2::jsonb)

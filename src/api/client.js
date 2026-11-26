@@ -56,9 +56,26 @@ export const api = {
     }),
     searchPeople: (query) => request(`/api/linkedin/search?${new URLSearchParams({ query })}`),
   },
+  mcp: {
+    list: () => request('/api/mcp/servers'),
+    connect: ({ name, url, apiKey, headers }) => request('/api/mcp/servers', {
+      method: 'POST',
+      body: { name, url, api_key: apiKey, headers },
+    }),
+    tools: (id) => request(`/api/mcp/servers/${encodeURIComponent(id)}/tools`),
+    test: (id) => request(`/api/mcp/servers/${encodeURIComponent(id)}/test`, { method: 'POST', body: {} }),
+    disconnect: (id) => request(`/api/mcp/servers/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  },
   settings: {
     get: () => request('/api/settings'),
     update: (preferences) => request('/api/settings', { method: 'PATCH', body: preferences }),
+    keys: () => request('/api/settings/keys'),
+    saveKey: ({ provider, apiKey }) => request('/api/settings/keys', {
+      method: 'PUT',
+      body: { provider, api_key: apiKey },
+    }),
+    deleteKey: (provider) => request(`/api/settings/keys/${encodeURIComponent(provider)}`, { method: 'DELETE' }),
+    plan: () => request('/api/settings/plan'),
   },
   chat: (body) => request('/api/chat', { method: 'POST', body }),
   jobs: {

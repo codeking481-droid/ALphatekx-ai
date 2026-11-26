@@ -1,7 +1,8 @@
-import { createHash, randomBytes } from 'node:crypto'
+import { createHash, randomBytes, randomUUID } from 'node:crypto'
 import { config } from '../config.js'
 import { pool } from '../db/pool.js'
 import { decryptLinkedInToken, encryptLinkedInToken, getLinkedInEncryptionKey } from './crypto.js'
+import { createScheduleOccurrences } from '../intelligence/scheduling.js'
 
 const LINKEDIN_AUTH_URL = 'https://www.linkedin.com/oauth/v2/authorization'
 const LINKEDIN_TOKEN_URL = 'https://www.linkedin.com/oauth/v2/accessToken'
@@ -144,6 +145,7 @@ export async function disconnectLinkedIn({ userId, database = pool }) {
 export async function createLinkedInPost({
   userId,
   text,
+  schedule = null,
   approved,
   approvalId,
   database = pool,
@@ -151,6 +153,8 @@ export async function createLinkedInPost({
   fetchImpl = fetch,
 }) {
   const postText = validateText(text, 'Post text', 3000)
+  const postSchedule = schedule === null ? null : validatePostSchedule(schedule)
+  const payload = { text: postText, ...(postSchedule ? { schedule: postSchedule } : {}) }
   if (approved !== true) {
     return {
       preview: true,
@@ -158,7 +162,7 @@ export async function createLinkedInPost({
       approvalId: await createLinkedInApproval({
         userId,
         action: 'post',
-        payload: { text: postText },
+        payload,
         database,
       }),
     }
@@ -166,15 +170,16 @@ export async function createLinkedInPost({
   await consumeLinkedInApproval({
     userId,
     action: 'post',
-    payload: { text: postText },
+    payload,
     approvalId,
     database,
   })
-  return publishLinkedInPost({ userId, text: postText, database, env, fetchImpl })
+  return publishLinkedInPost({ userId, text: postText, schedule: postSchedule, database, env, fetchImpl })
 }
 
-export async function publishLinkedInPost({ userId, text, database = pool, env = process.env, fetchImpl = fetch }) {
+export async function publishLinkedInPost({ userId, text, schedule = null, executionId = null, database = pool, env = process.env, fetchImpl = fetch }) {
   const postText = validateText(text, 'Post text', 3000)
+  if (schedule) return scheduleLinkedInPosts({ userId, text: postText, schedule, executionId, database, env })
   const { connection, token } = await getConnection({ userId, database, env })
   const response = await linkedinRequest({
     url: `${LINKEDIN_API_ORIGIN}/rest/posts`,
@@ -196,6 +201,96 @@ export async function publishLinkedInPost({ userId, text, database = pool, env =
     fetchImpl,
   })
   return { preview: false, posted: true, postId: response.headers.get('x-restli-id') }
+}
+
+export async function scheduleLinkedInPosts({ userId, text, schedule, executionId = null, database = pool, env = process.env }) {
+  const normalized = validatePostSchedule(schedule)
+  const scheduledFor = normalized.mode === 'scheduled'
+    ? [normalized.scheduledAt]
+    : createScheduleOccurrences(normalized)
+  const postTexts = normalized.mode === 'scheduled' || normalized.sameText
+    ? scheduledFor.map(() => text)
+    : normalized.texts
+  const now = Date.now()
+  if (scheduledFor.some((timestamp) => {
+    const time = new Date(timestamp).getTime()
+    return !Number.isFinite(time) || time < now + 60_000 || time > now + 366 * 24 * 60 * 60_000
+  })) {
+    throw httpError('Scheduled LinkedIn posts must be at least one minute and no more than one year in the future.', 400)
+  }
+  await getConnection({ userId, database, env })
+
+  const batchId = randomUUID()
+  const client = await database.connect()
+  try {
+    await client.query('BEGIN')
+    const created = []
+    for (let index = 0; index < scheduledFor.length; index += 1) {
+      const { rows } = await client.query(
+        `INSERT INTO scheduled_linkedin_posts
+           (user_id, source_execution_id, batch_id, post_text, scheduled_for, timezone)
+         VALUES ($1, $2, $3, $4, $5, $6)
+         RETURNING id, scheduled_for`,
+        [userId, executionId, batchId, validateText(postTexts[index], 'Post text', 3000), scheduledFor[index], normalized.timezone],
+      )
+      created.push(rows[0])
+    }
+    await client.query('COMMIT')
+    return {
+      preview: false,
+      scheduled: true,
+      batchId,
+      count: created.length,
+      scheduledPosts: created.map((post) => ({ id: post.id, scheduledFor: post.scheduled_for })),
+    }
+  } catch (error) {
+    await client.query('ROLLBACK')
+    throw error
+  } finally {
+    client.release()
+  }
+}
+
+export function validatePostSchedule(schedule) {
+  if (!schedule || typeof schedule !== 'object' || Array.isArray(schedule) ||
+    !['scheduled', 'recurring'].includes(schedule.mode) ||
+    typeof schedule.timezone !== 'string' || schedule.timezone.length > 100) {
+    throw httpError('The LinkedIn posting schedule is invalid.', 400)
+  }
+  try {
+    new Intl.DateTimeFormat('en', { timeZone: schedule.timezone })
+  } catch {
+    throw httpError('The LinkedIn posting timezone is invalid.', 400)
+  }
+  if (typeof schedule.scheduledAt !== 'string' || !Number.isFinite(Date.parse(schedule.scheduledAt))) {
+    throw httpError('A valid scheduled time is required.', 400)
+  }
+  const normalized = {
+    mode: schedule.mode,
+    scheduledAt: new Date(schedule.scheduledAt).toISOString(),
+    timezone: schedule.timezone,
+  }
+  if (schedule.mode === 'scheduled') return normalized
+  if (!Number.isInteger(schedule.count) || schedule.count < 2 || schedule.count > 30 ||
+    !Number.isInteger(schedule.intervalMinutes) || schedule.intervalMinutes < 1440 ||
+    schedule.intervalMinutes > 43_200 || schedule.intervalMinutes % 1440 !== 0 ||
+    typeof schedule.sameText !== 'boolean') {
+    throw httpError('The recurring LinkedIn schedule must specify 2-30 daily posts and a text reuse choice.', 400)
+  }
+  if (schedule.texts !== undefined && (!Array.isArray(schedule.texts) || schedule.texts.length !== schedule.count)) {
+    throw httpError('Provide exactly one post text for each scheduled date.', 400)
+  }
+  if (!schedule.sameText && !Array.isArray(schedule.texts)) {
+    throw httpError('Different scheduled posts require one text for each date.', 400)
+  }
+  const texts = schedule.texts?.map((value) => validateText(value, 'Post text', 3000))
+  return {
+    ...normalized,
+    count: schedule.count,
+    intervalMinutes: schedule.intervalMinutes,
+    sameText: schedule.sameText,
+    ...(texts ? { texts } : {}),
+  }
 }
 
 export async function getLinkedInComments({

@@ -126,6 +126,7 @@ export default function History() {
           strokeWidth={1.8}
         />
         <input
+          id="search"
           value={search}
           onChange={(event) => setSearch(event.target.value)}
           placeholder="Search conversations"

@@ -175,14 +175,14 @@ export default function Composer({ value, onChange, onSend, onVoice, sending }) 
   };
 
   const iconButton =
-    "flex h-10 w-10 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:h-9 sm:w-9";
+    "flex h-10 w-10 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
 
   return (
     <div>
       <div
         className={cn(
-          "rounded-[24px] border border-border/80 bg-card/80 px-2.5 pb-2 pt-2.5 shadow-[0_8px_32px_-18px_hsl(var(--foreground)/0.18)] backdrop-blur-xl transition-colors sm:rounded-[26px] sm:px-2 sm:pb-1.5 sm:pt-2",
-          "focus-within:border-primary/25 focus-within:bg-card",
+          "rounded-[28px] border border-border bg-secondary px-3 pb-3 pt-3 shadow-[0_8px_32px_-18px_hsl(var(--foreground)/0.18)] backdrop-blur-xl transition-colors",
+          "focus-within:border-primary/40 focus-within:bg-secondary",
           listening && "border-primary/40"
         )}
       >
@@ -215,7 +215,7 @@ export default function Composer({ value, onChange, onSend, onVoice, sending }) 
           onChange={handleInput}
           onKeyDown={handleKeyDown}
           placeholder="Message Biz"
-          className="max-h-[220px] min-h-12 w-full resize-none bg-transparent px-2.5 pb-2 pt-1 text-[16px] leading-[1.6] text-foreground placeholder:text-muted-foreground/60 focus:outline-none sm:min-h-0 sm:text-[15px]"
+          className="max-h-[220px] min-h-12 w-full resize-none bg-transparent px-1 pb-3 pt-1 text-[16px] leading-[1.6] text-foreground placeholder:text-muted-foreground/70 focus:outline-none"
         />
 
         <div className="flex items-center gap-0.5">
@@ -230,7 +230,7 @@ export default function Composer({ value, onChange, onSend, onVoice, sending }) 
             {uploading ? (
               <Loader2 className="h-4 w-4 animate-spin" strokeWidth={1.8} />
             ) : (
-              <Paperclip className="h-[17px] w-[17px]" strokeWidth={1.7} />
+              <Paperclip className="h-5 w-5" strokeWidth={1.7} />
             )}
           </button>
 
@@ -247,7 +247,7 @@ export default function Composer({ value, onChange, onSend, onVoice, sending }) 
             {listening ? (
               <Square className="h-3 w-3" strokeWidth={2} fill="currentColor" />
             ) : (
-              <Mic className="h-[17px] w-[17px]" strokeWidth={1.7} />
+              <Mic className="h-5 w-5" strokeWidth={1.7} />
             )}
           </button>
 
@@ -258,7 +258,7 @@ export default function Composer({ value, onChange, onSend, onVoice, sending }) 
             title="Voice conversation"
             className={iconButton}
           >
-            <AudioLines className="h-[17px] w-[17px]" strokeWidth={1.7} />
+            <AudioLines className="h-5 w-5" strokeWidth={1.7} />
           </button>
 
           {linkedinConnected && (
@@ -267,10 +267,10 @@ export default function Composer({ value, onChange, onSend, onVoice, sending }) 
               onClick={previewLinkedInPost}
               disabled={!value.trim() || sending || linkedinBusy}
               title="Preview a LinkedIn post"
-              className="inline-flex h-9 items-center gap-1 rounded-full px-2 text-[11px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-40 sm:px-2.5"
+              className="inline-flex h-10 items-center gap-1 rounded-full px-2 text-[11px] text-[#0A66C2] transition-colors hover:bg-accent disabled:opacity-40 sm:px-2.5"
             >
-              {linkedinBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Linkedin className="h-3.5 w-3.5" />}
-              <span className="hidden sm:inline">Post to LinkedIn</span>
+              {linkedinBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Linkedin className="h-3.5 w-3.5 text-[#0A66C2]" />}
+              <span>Post to LinkedIn</span>
             </button>
           )}
 
@@ -281,7 +281,7 @@ export default function Composer({ value, onChange, onSend, onVoice, sending }) 
             aria-label="Send message"
             title="Send"
             className={cn(
-              "ml-auto flex h-10 w-10 items-center justify-center rounded-full transition-all sm:h-9 sm:w-9",
+              "ml-auto flex h-11 w-11 items-center justify-center rounded-full transition-all",
               canSend
                 ? "bg-primary text-primary-foreground hover:opacity-90"
                 : "bg-muted text-muted-foreground/50"
@@ -290,7 +290,7 @@ export default function Composer({ value, onChange, onSend, onVoice, sending }) 
             {sending ? (
               <Loader2 className="h-4 w-4 animate-spin" strokeWidth={2} />
             ) : (
-              <ArrowUp className="h-4 w-4" strokeWidth={2.1} />
+              <ArrowUp className="h-5 w-5" strokeWidth={2.1} />
             )}
           </button>
         </div>

@@ -9,6 +9,10 @@ import VoiceMode from "@/components/voice/VoiceMode";
 import { api } from "@/api/client";
 import { isUiPreview } from "@/lib/ui-preview";
 
+function userTimezone() {
+  return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+}
+
 export default function Chat() {
   const { conversationId } = useParams();
   const navigate = useNavigate();
@@ -25,8 +29,21 @@ export default function Chat() {
   const [activeJobId, setActiveJobId] = useState(null);
   const [jobProgress, setJobProgress] = useState("");
   const [pendingApproval, setPendingApproval] = useState(false);
+  const [showAds, setShowAds] = useState(false);
 
   useEffect(() => () => activePollRef.current?.abort(), []);
+
+  useEffect(() => {
+    let active = true;
+    api.settings.plan()
+      .then((currentPlan) => {
+        if (active) setShowAds(currentPlan.plan === "free");
+      })
+      .catch((requestError) => {
+        if (active) setError(requestError.message || "Your plan settings couldn't be loaded.");
+      });
+    return () => { active = false; };
+  }, []);
 
   useEffect(() => {
     if (!conversationId) {
@@ -129,6 +146,7 @@ export default function Chat() {
         const data = await api.chat({
           conversation_id: conversationId || null,
           message: text,
+          timezone: userTimezone(),
           attachments: attachments.map((file) => ({ name: file.name, url: file.url })),
         });
         submittedJobId = data.job_id;
@@ -182,6 +200,7 @@ export default function Chat() {
       const data = await api.chat({
         conversation_id: conversationId || null,
         message: text,
+        timezone: userTimezone(),
         attachments: [],
       });
       const assistantId = `voice-reply-${Date.now()}`;
@@ -262,7 +281,7 @@ export default function Chat() {
                   <Loader2 className="h-5 w-5 animate-spin" strokeWidth={1.8} />
                 </div>
               ) : (
-                <MessageList messages={messages} thinking={sending} />
+                <MessageList messages={messages} thinking={sending} showAds={showAds} />
               )}
             </div>
           </div>

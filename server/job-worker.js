@@ -12,6 +12,9 @@ import { initializeSkills } from './skills/service.js'
 import { recoverStaleJobs } from './jobs/service.js'
 import { createJobWorker } from './jobs/worker.js'
 import { log } from './observability/logger.js'
+import { withUserMcpTools } from './mcp/registry.js'
+import { withUserProviderRegistry } from './settings/byok.js'
+import { publishDueLinkedInPosts } from './linkedin/scheduler.js'
 
 validateWorkerConfig()
 registerWebSearchTool()
@@ -29,11 +32,35 @@ if (!process.env.TAVILY_API_KEY) {
   log('warn', 'tool.web_search.unconfigured', { message: 'TAVILY_API_KEY is not set; web_search will fail explicitly until configured.' })
 }
 
-const worker = createJobWorker({ database: pool, registry: providerRegistry })
+const worker = createJobWorker({
+  database: pool,
+  registry: providerRegistry,
+  withUserContext: ({ userId, database }, operation) => withUserMcpTools(
+    { userId, database },
+    () => withUserProviderRegistry({ userId, database, registry: providerRegistry }, operation),
+  ),
+})
 let stopping = false
+let scheduledPostsBusy = false
+const processScheduledPosts = async () => {
+  if (scheduledPostsBusy || stopping) return
+  scheduledPostsBusy = true
+  try {
+    const result = await publishDueLinkedInPosts({ database: pool })
+    if (result.published || result.failed) log('info', 'linkedin.scheduled_posts.processed', result)
+  } catch (error) {
+    log('error', 'linkedin.scheduled_posts.failed', { error: { name: error.name, message: error.message } })
+  } finally {
+    scheduledPostsBusy = false
+  }
+}
+await processScheduledPosts()
+const scheduledPostsTimer = setInterval(processScheduledPosts, 30_000)
+scheduledPostsTimer.unref()
 const shutdown = () => {
   if (stopping) return
   stopping = true
+  clearInterval(scheduledPostsTimer)
   worker.stop()
   log('info', 'job.worker.stopping', { workerId: worker.workerId })
 }

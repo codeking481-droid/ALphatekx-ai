@@ -1,0 +1,68 @@
+import test from 'node:test'
+import assert from 'node:assert/strict'
+import { listUserApiKeys, saveUserApiKey, withUserProviderRegistry } from './byok.js'
+
+test('BYOK credentials are encrypted and only the last four characters are returned', async () => {
+  let stored
+  const database = {
+    async query(sql, params) {
+      if (sql.includes('INSERT INTO integration_accounts')) {
+        stored = {
+          provider_id: params[1],
+          encrypted_credentials: params[2],
+          credential_key_version: params[3],
+        }
+        return { rowCount: 1 }
+      }
+      assert.match(sql, /provider_id LIKE 'byok:%'/)
+      return { rows: stored ? [stored] : [] }
+    },
+  }
+
+  const saved = await saveUserApiKey({
+    userId: 'user-1',
+    providerId: 'openai',
+    apiKey: 'sk-test-secret-1234',
+    database,
+  })
+  const listed = await listUserApiKeys({ userId: 'user-1', database })
+
+  assert.equal(saved.keySuffix, '1234')
+  assert.deepEqual(listed, {
+    keys: [{ provider: 'openai', configured: true, keySuffix: '1234' }],
+    hasOwnKey: true,
+  })
+  assert.ok(Buffer.isBuffer(stored.encrypted_credentials))
+  assert.doesNotMatch(stored.encrypted_credentials.toString('utf8'), /sk-test-secret-1234/)
+})
+
+test('a saved user provider takes precedence without exposing its key in the provider catalog', async () => {
+  const { encryptCredential } = await import('../integrations/credential-vault.js')
+  const sealed = encryptCredential(JSON.stringify({ apiKey: 'sk-user-owned-9876' }))
+  const database = {
+    async query() {
+      return {
+        rows: [{
+          provider_id: 'byok:openai',
+          encrypted_credentials: sealed.value,
+          credential_key_version: sealed.version,
+        }],
+      }
+    },
+  }
+  const fallback = { id: 'worker1', name: 'Worker', available: true }
+  const baseRegistry = { list: () => [fallback], get: (id) => id === 'worker1' ? fallback : null }
+  let selected
+  await withUserProviderRegistry({
+    userId: 'user-1',
+    database,
+    registry: baseRegistry,
+    env: { AI_MODEL_OPENAI: 'test-model' },
+  }, async (registry) => {
+    selected = registry.list()
+    assert.equal(registry.get('openai').model, 'test-model')
+  })
+
+  assert.deepEqual(selected.map(({ id }) => id), ['openai'])
+  assert.doesNotMatch(JSON.stringify(selected), /sk-user-owned-9876/)
+})

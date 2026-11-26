@@ -18,6 +18,7 @@ export async function createPlanGraph(registry, provider, {
   allowedToolIds = null,
   requiresExternalAction = false,
   skill = null,
+  toolContext = {},
 }) {
   const request = {
     messages: buildPlanMessages({ message, objective, contextMessages, attachmentContext, allowedToolIds }),
@@ -34,6 +35,7 @@ export async function createPlanGraph(registry, provider, {
       requiresExternalAction,
       message,
       skill,
+      toolContext,
     })
   } catch {
     const repairMessages = [
@@ -71,6 +73,7 @@ export async function createPlanGraph(registry, provider, {
         requiresExternalAction,
         message,
         skill,
+        toolContext,
       })
     } catch (repairError) {
       const fallback = requiresExternalAction
@@ -82,6 +85,7 @@ export async function createPlanGraph(registry, provider, {
         requiresExternalAction,
         message,
         skill,
+        toolContext,
       })
     }
   }

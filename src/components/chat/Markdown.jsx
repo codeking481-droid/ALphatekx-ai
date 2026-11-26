@@ -7,7 +7,7 @@ import { cn } from "@/lib/utils";
  */
 export default function Markdown({ content, className }) {
   return (
-    <div className={cn("text-[15px] leading-[1.72] text-foreground/90", className)}>
+    <div className={cn("text-[16px] leading-[1.6] text-foreground/90", className)}>
       <ReactMarkdown
         components={{
           p: ({ children }) => <p className="mb-3 whitespace-pre-wrap last:mb-0">{children}</p>,

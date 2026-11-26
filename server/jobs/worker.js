@@ -30,6 +30,7 @@ export function createJobWorker({
   processChat = processChatRequest,
   runApprovedTool = executeApprovedTool,
   resumeApproval = resumeExecutionAfterApproval,
+  withUserContext = async (_context, operation) => operation(registry),
 }) {
   let stopped = false
 
@@ -79,42 +80,45 @@ export function createJobWorker({
         throw Object.assign(new Error('Task cancelled by the user.'), { name: 'AbortError' })
       }
       const input = parseJobInput(job.input)
-      if (job.approval_id) {
-        const approvalResult = await runApprovedTool({
-          userId: job.user_id,
-          approvalId: job.approval_id,
-          database,
-          signal: controller.signal,
-          requestId: input.request_id || job.id,
-        })
-        throwIfAborted(controller.signal)
-        await resumeApproval({
-          userId: job.user_id,
-          approvalId: job.approval_id,
-          approvalResult,
-          registry,
-          database,
-          jobId: job.id,
-          workerId,
-          signal: controller.signal,
-          onProgress: update,
-        })
-      } else {
-        await processChat({
-          userId: job.user_id,
-          requestId: input.request_id || job.id,
-          conversationId: input.conversation_id || null,
-          projectId: input.project_id || null,
-          message: input.message,
-          attachments: input.attachments || [],
-          database,
-          registry,
-          signal: controller.signal,
-          jobId: job.id,
-          workerId,
-          onProgress: update,
-        })
-      }
+      await withUserContext({ userId: job.user_id, database }, async (userRegistry) => {
+        if (job.approval_id) {
+          const approvalResult = await runApprovedTool({
+            userId: job.user_id,
+            approvalId: job.approval_id,
+            database,
+            signal: controller.signal,
+            requestId: input.request_id || job.id,
+          })
+          throwIfAborted(controller.signal)
+          await resumeApproval({
+            userId: job.user_id,
+            approvalId: job.approval_id,
+            approvalResult,
+            registry: userRegistry,
+            database,
+            jobId: job.id,
+            workerId,
+            signal: controller.signal,
+            onProgress: update,
+          })
+        } else {
+          await processChat({
+            userId: job.user_id,
+            requestId: input.request_id || job.id,
+            conversationId: input.conversation_id || null,
+            projectId: input.project_id || null,
+            message: input.message,
+            timezone: input.timezone || 'UTC',
+            attachments: input.attachments || [],
+            database,
+            registry: userRegistry,
+            signal: controller.signal,
+            jobId: job.id,
+            workerId,
+            onProgress: update,
+          })
+        }
+      })
     } catch (error) {
       if (!cancelRequested && !leaseLost) {
         try {

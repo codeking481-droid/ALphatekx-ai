@@ -33,10 +33,10 @@ export default function ChatWelcome({ onPick }) {
         <span className="welcome-avatar__spark welcome-avatar__spark--two" />
       </div>
 
-      <h1 className="mt-6 font-display text-[38px] leading-[1.05] text-foreground sm:mt-8 sm:text-[52px]">
+      <h1 className="mt-6 font-heading text-[32px] font-semibold leading-[1.05] tracking-[-0.035em] text-foreground sm:mt-8 sm:text-[42px]">
         {greeting()}
       </h1>
-      <p className="mt-3 max-w-sm text-[14px] leading-relaxed text-muted-foreground sm:mt-3.5 sm:text-[14.5px]">
+      <p className="mt-3 max-w-sm text-[15px] leading-relaxed text-muted-foreground sm:mt-3.5 sm:text-[18px]">
         What would you like to work on?
       </p>
 
