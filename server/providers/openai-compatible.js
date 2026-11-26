@@ -33,12 +33,12 @@ export function createOpenAICompatibleProvider({
         body: JSON.stringify({
           model,
           messages,
-          temperature: 0.3,
+          ...(['groq', 'openrouter'].includes(id) ? { temperature: 0.3 } : {}),
           ...(jsonSchema ? { response_format: { type: 'json_object' } } : {}),
           ...(tools?.length ? { tools, tool_choice: 'auto' } : {}),
         }),
       })
-      if (!response.ok) throw providerError(id, response)
+      if (!response.ok) throw providerError(id, response, await responseErrorDetail(response, apiKey))
       const data = await response.json()
       const choice = data.choices?.[0]
       return {
@@ -60,7 +60,7 @@ export function createOpenAICompatibleProvider({
         headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json', ...extraHeaders },
         body: JSON.stringify({ model, messages, stream: true }),
       })
-      if (!response.ok) throw providerError(id, response)
+      if (!response.ok) throw providerError(id, response, await responseErrorDetail(response, apiKey))
       if (!response.body) throw new ProviderError(`${name} did not return a response stream.`, { provider: id })
       for await (const line of readSseData(response.body)) {
         if (line === '[DONE]') break
@@ -80,7 +80,7 @@ export function createOpenAICompatibleProvider({
         signal: AbortSignal.timeout(timeoutMs),
         headers: { Authorization: `Bearer ${apiKey}`, ...extraHeaders },
       })
-      if (!response.ok) throw providerError(id, response)
+      if (!response.ok) throw providerError(id, response, await responseErrorDetail(response, apiKey))
       const data = await response.json()
       return Array.isArray(data.data) ? data.data.map((item) => item.id).filter(Boolean) : []
     },
@@ -104,5 +104,27 @@ async function* readSseData(body) {
     }
   } finally {
     reader.releaseLock()
+  }
+}
+
+async function responseErrorDetail(response, apiKey) {
+  try {
+    const body = await response.clone().text()
+    let message = body
+    try {
+      const data = JSON.parse(body)
+      message = data.error?.message || data.message || body
+    } catch {
+      message = body
+    }
+    return (apiKey ? String(message).split(apiKey).join('[REDACTED_PROVIDER_KEY]') : String(message))
+      .replace(/gsk_[A-Za-z0-9_-]+/gi, '[REDACTED_GROQ_KEY]')
+      .replace(/sk-or-v1-[A-Za-z0-9_-]+/gi, '[REDACTED_OPENROUTER_KEY]')
+      .replace(/AIzaSy[A-Za-z0-9_-]+/gi, '[REDACTED_GEMINI_KEY]')
+      .replace(/Bearer\s+[A-Za-z0-9._~-]+/gi, 'Bearer [REDACTED]')
+      .replace(/\s+/g, ' ')
+      .slice(0, 500)
+  } catch {
+    return ''
   }
 }

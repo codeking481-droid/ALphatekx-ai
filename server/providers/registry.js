@@ -4,12 +4,19 @@ import { createGeminiProvider } from './gemini.js'
 import { assertProviderContract } from './interface.js'
 import { createOpenAICompatibleProvider } from './openai-compatible.js'
 import { createCloudflareWorkerProvider } from './cloudflare-worker.js'
+import { createCloudflareWorkersAiProvider } from './cloudflare-workers-ai.js'
 
 const compatibleProviders = [
   { id: 'openai', name: 'OpenAI', baseUrl: 'https://api.openai.com/v1', key: 'OPENAI_API_KEY' },
   { id: 'deepseek', name: 'DeepSeek', baseUrl: 'https://api.deepseek.com/v1', key: 'DEEPSEEK_API_KEY' },
   { id: 'mistral', name: 'Mistral', baseUrl: 'https://api.mistral.ai/v1', key: 'MISTRAL_API_KEY' },
-  { id: 'groq', name: 'Groq', baseUrl: 'https://api.groq.com/openai/v1', key: 'GROQ_API_KEY' },
+  {
+    id: 'groq',
+    name: 'Groq',
+    baseUrl: 'https://api.groq.com/openai/v1',
+    key: 'GROQ_API_KEY',
+    defaultModel: 'llama-3.3-70b-versatile',
+  },
   { id: 'xai', name: 'xAI', baseUrl: 'https://api.x.ai/v1', key: 'XAI_API_KEY' },
   {
     id: 'openrouter',
@@ -26,6 +33,18 @@ export function createProviderRegistry(env = process.env) {
   const metrics = new Map()
   const timeoutMs = config.aiRequestTimeoutMs
 
+  const workersAi = createCloudflareWorkersAiProvider({
+    accountId: env.CLOUDFLARE_ACCOUNT_ID,
+    apiToken: env.CLOUDFLARE_API_TOKEN,
+    timeoutMs,
+    models: [
+      env.CLOUDFLARE_AI_MODEL || '@cf/meta/llama-3.3-70b-instruct-fp8-fast',
+      env.CLOUDFLARE_AI_FALLBACK_MODEL || '@cf/qwen/qwen2.5-coder-32b-instruct',
+    ],
+  })
+  providers.set(workersAi.id, workersAi)
+  metrics.set(workersAi.id, providerMetrics(workersAi.id, env))
+
   for (const definition of compatibleProviders) {
     metrics.set(definition.id, providerMetrics(definition.id, env))
     providers.set(definition.id, createOpenAICompatibleProvider({
@@ -33,7 +52,8 @@ export function createProviderRegistry(env = process.env) {
       apiKey: env[definition.key],
       model: definition.id === 'openrouter'
         ? env.OPENROUTER_MODEL || env.AI_MODEL_OPENROUTER
-        : env[`AI_MODEL_${definition.id.toUpperCase()}`],
+        : env[`AI_MODEL_${definition.id.toUpperCase()}`] ||
+          (definition.id === 'groq' ? definition.defaultModel : undefined),
       timeoutMs,
       extraHeaders: definition.headers,
       supports: definition.supports,
@@ -58,7 +78,8 @@ export function createProviderRegistry(env = process.env) {
   metrics.set('anthropic', providerMetrics('anthropic', env))
   providers.set('gemini', createGeminiProvider({
     apiKey: env.GEMINI_API_KEY,
-    model: env.GEMINI_MODEL || env.AI_MODEL_GEMINI,
+    model: env.GEMINI_MODEL || env.AI_MODEL_GEMINI ||
+      (env.GEMINI_API_KEY?.trim() ? 'gemini-2.5-flash' : ''),
     timeoutMs,
   }))
   metrics.set('gemini', providerMetrics('gemini', env))
@@ -81,10 +102,10 @@ export function createProviderRegistry(env = process.env) {
         model: model || null,
         capabilities,
         available: isAvailable,
-        keySuffix: ['openrouter', 'gemini'].includes(id) && env[id === 'openrouter' ? 'OPENROUTER_API_KEY' : 'GEMINI_API_KEY']?.trim()
-          ? env[id === 'openrouter' ? 'OPENROUTER_API_KEY' : 'GEMINI_API_KEY'].trim().slice(-4)
+        keySuffix: providerKeySuffix(id, env),
+        secretSource: ['openrouter', 'gemini'].includes(id) && providerKeySuffix(id, env)
+          ? 'Set in Cloudflare / .env'
           : null,
-        secretSource: ['openrouter', 'gemini'].includes(id) ? 'Set in Cloudflare / .env' : null,
         ...metrics.get(id),
       }))
     },
@@ -128,4 +149,13 @@ function providerMetrics(id, env) {
 function score(value) {
   const parsed = Number(value)
   return Number.isFinite(parsed) ? Math.min(5, Math.max(1, parsed)) : 3
+}
+
+function providerKeySuffix(id, env) {
+  const keyName = {
+    openrouter: 'OPENROUTER_API_KEY',
+    gemini: 'GEMINI_API_KEY',
+    groq: 'GROQ_API_KEY',
+  }[id]
+  return keyName && env[keyName]?.trim() ? env[keyName].trim().slice(-4) : null
 }

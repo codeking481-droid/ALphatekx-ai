@@ -34,6 +34,24 @@ test('provider adapter sends the selected model and returns normalized text', as
   }
 })
 
+test('compatible provider errors include sanitized upstream details', async () => {
+  const provider = makeProvider({ id: 'groq', apiKey: 'gsk_test-provider-secret' })
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = async () => new Response(JSON.stringify({
+    error: { message: 'Rejected key gsk_test-provider-secret' },
+  }), { status: 401 })
+  try {
+    await assert.rejects(provider.generate({ messages: [] }), (error) => {
+      assert.equal(error.upstreamStatus, 401)
+      assert.match(error.message, /Rejected key/)
+      assert.equal(error.message.includes('gsk_test-provider-secret'), false)
+      return true
+    })
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
 test('Anthropic adapter translates common tool definitions and normalizes tool calls', async () => {
   const originalFetch = globalThis.fetch
   let request
@@ -78,9 +96,9 @@ test('unconfigured provider refuses model calls with an explicit configuration e
   await assert.rejects(provider.generate({ messages: [] }), (error) => error instanceof ProviderError && error.status === 503)
 })
 
-test('provider selector requires an available provider instead of returning a fake response', () => {
+test('provider selector returns deterministic local fallback when no AI is configured', () => {
   const registry = { list: () => [{ id: 'openai', available: false }], get: () => null }
-  assert.throws(() => selectProvider(registry), /No AI provider is configured/)
+  assert.equal(selectProvider(registry).id, 'local-fallback')
 })
 
 test('configured AI workers call their URL directly without a key or model', async () => {
@@ -176,6 +194,21 @@ test('OpenRouter and Gemini use their dedicated environment model variables', ()
   assert.equal(providers.find(({ id }) => id === 'gemini').keySuffix, 'abcd')
   assert.equal(JSON.stringify(providers).includes('sk-or-v1'), false)
   assert.equal(JSON.stringify(providers).includes('AIzaSy'), false)
+})
+
+test('Workers AI and Groq are available using only their server environment configuration', () => {
+  const registry = createProviderRegistry({
+    CLOUDFLARE_ACCOUNT_ID: 'cloudflare-account',
+    CLOUDFLARE_API_TOKEN: 'cloudflare-secret-token',
+    GROQ_API_KEY: 'gsk_test-secret-key',
+  })
+  assert.equal(registry.get('workers_ai').isAvailable, true)
+  assert.equal(registry.get('workers_ai').model, '@cf/meta/llama-3.3-70b-instruct-fp8-fast')
+  assert.equal(registry.get('groq').isAvailable, true)
+  assert.equal(registry.get('groq').model, 'llama-3.3-70b-versatile')
+  const catalog = JSON.stringify(registry.list())
+  assert.equal(catalog.includes('cloudflare-secret-token'), false)
+  assert.equal(catalog.includes('gsk_test-secret-key'), false)
 })
 
 test('AI worker uses the exact configured URL and requires HTTPS', async () => {

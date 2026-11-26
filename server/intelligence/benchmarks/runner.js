@@ -169,7 +169,7 @@ export async function runRealBenchmarks({
           metrics: scenario.metrics,
           input: { messages: scenario.messages },
           expected: scenario.rubric,
-          passed: checks.length > 0 && checks.every((check) => check.passed),
+          passed: !fallbackUsed && checks.length > 0 && checks.every((check) => check.passed),
           checks,
           actual,
           evaluationType: 'deterministic_text_rubric',

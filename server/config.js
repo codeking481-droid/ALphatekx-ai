@@ -21,11 +21,7 @@ export const config = {
   uploadDir: process.env.UPLOAD_DIR || './uploads',
   workspaceDir: path.resolve(projectRoot, process.env.WORKSPACE_DIR || 'workspace'),
   skillsDir: path.resolve(projectRoot, 'skills'),
-  aiProvider: process.env.PRIMARY_AI_PROVIDER?.trim().toLowerCase() ||
-    process.env.AI_PROVIDER?.trim().toLowerCase() ||
-    (process.env.OPENROUTER_API_KEY?.trim() ? 'openrouter' :
-      process.env.GEMINI_API_KEY?.trim() ? 'gemini' :
-        process.env.AI_PROVIDER_URL_1?.trim() ? 'worker1' : undefined),
+  aiProvider: 'workers_ai',
   aiRequestTimeoutMs: Number(process.env.AI_REQUEST_TIMEOUT_MS || 60_000),
 }
 

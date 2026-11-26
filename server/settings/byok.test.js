@@ -36,22 +36,22 @@ test('BYOK credentials are encrypted and only the last four characters are retur
   assert.doesNotMatch(stored.encrypted_credentials.toString('utf8'), /sk-test-secret-1234/)
 })
 
-test('a saved user provider takes precedence without exposing its key in the provider catalog', async () => {
+test('a saved user provider overrides its default and preserves other providers without exposing keys', async () => {
   const { encryptCredential } = await import('../integrations/credential-vault.js')
   const sealed = encryptCredential(JSON.stringify({ apiKey: 'sk-user-owned-9876' }))
   const database = {
     async query() {
       return {
         rows: [{
-          provider_id: 'byok:openai',
+          provider_id: 'byok:groq',
           encrypted_credentials: sealed.value,
           credential_key_version: sealed.version,
         }],
       }
     },
   }
-  const fallback = { id: 'worker1', name: 'Worker', available: true }
-  const baseRegistry = { list: () => [fallback], get: (id) => id === 'worker1' ? fallback : null }
+  const fallback = { id: 'workers_ai', name: 'Workers AI', available: true }
+  const baseRegistry = { list: () => [fallback], get: (id) => id === 'workers_ai' ? fallback : null }
   let selected
   await withUserProviderRegistry({
     userId: 'user-1',
@@ -60,9 +60,10 @@ test('a saved user provider takes precedence without exposing its key in the pro
     env: { AI_MODEL_OPENAI: 'test-model' },
   }, async (registry) => {
     selected = registry.list()
-    assert.equal(registry.get('openai').model, 'test-model')
+    assert.equal(registry.get('groq').model, 'llama-3.3-70b-versatile')
+    assert.equal(registry.get('workers_ai'), fallback)
   })
 
-  assert.deepEqual(selected.map(({ id }) => id), ['openai'])
+  assert.deepEqual(selected.map(({ id }) => id), ['workers_ai', 'groq'])
   assert.doesNotMatch(JSON.stringify(selected), /sk-user-owned-9876/)
 })

@@ -19,12 +19,10 @@ export class ProviderError extends Error {
   }
 }
 
-export function providerError(provider, response) {
+export function providerError(provider, response, detail = '') {
   const retryable = response.status === 429 || response.status >= 500
   return new ProviderError(
-    response.status === 429
-      ? 'The selected AI provider is rate limited.'
-      : 'The AI provider request failed.',
+    `${provider} returned HTTP ${response.status}${detail ? `: ${detail}` : response.status === 429 ? ' (rate limited).' : '.'}`,
     {
       provider,
       status: retryable ? 503 : 502,

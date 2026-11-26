@@ -1,22 +1,22 @@
 import { config } from '../config.js'
+import { FALLBACK_PROVIDER_IDS, localFallbackProvider } from '../providers/fallback-chain.js'
 
 export function selectProvider(registry, {
   preferred = config.aiProvider,
   exclude = [],
   capability = 'textGeneration',
 } = {}) {
-  const candidates = registry.list()
+  const allProviders = registry.list()
+  const hasPrimaryChain = allProviders.some((provider) => FALLBACK_PROVIDER_IDS.includes(provider.id))
+  const candidates = allProviders
+    .filter((provider) => !hasPrimaryChain || FALLBACK_PROVIDER_IDS.includes(provider.id) || provider.id === preferred)
     .filter((provider) => provider.available && provider.capabilities?.[capability] && !exclude.includes(provider.id))
   if (preferred) {
     const selected = candidates.find((provider) => provider.id === preferred)
     if (selected) return registry.get(selected.id)
   }
   const selected = candidates.sort((left, right) => providerScore(right) - providerScore(left))[0]
-  if (!selected) {
-    const error = new Error('No AI provider is configured. Add a provider API key and model to the server environment.')
-    error.status = 503
-    throw error
-  }
+  if (!selected) return localFallbackProvider
   return registry.get(selected.id)
 }
 

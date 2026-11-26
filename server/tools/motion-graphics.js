@@ -64,15 +64,17 @@ function createDefaultMotionHtml(title) {
     .orbit::after { right: 12%; bottom: 24%; width: .4rem; }
     .mark {
       display: inline-grid;
-      width: 3.5rem;
-      aspect-ratio: 1;
+      min-width: 3.5rem;
+      height: 3.5rem;
       margin-bottom: 1.5rem;
       place-items: center;
       border: 1px solid rgb(117 226 162 / 65%);
       border-radius: 1.1rem;
+      padding: 0 1rem;
       color: #75e2a2;
-      font-size: 1.6rem;
+      font-size: 1rem;
       font-weight: 700;
+      letter-spacing: .12em;
       animation: arrive .8s cubic-bezier(.2,.8,.2,1) both;
     }
     h1 {
@@ -105,9 +107,9 @@ function createDefaultMotionHtml(title) {
 <body>
   <main aria-label="${safeTitle} animated intro">
     <div class="orbit" aria-hidden="true"></div>
-    <div class="mark" aria-hidden="true">${safeTitle.slice(0, 1).toUpperCase()}</div>
+    <div class="mark" aria-hidden="true">BIZ</div>
     <h1>${safeTitle}</h1>
-    <p>Ideas in motion</p>
+    <p>Chat Connect Automate</p>
   </main>
 </body>
 </html>`

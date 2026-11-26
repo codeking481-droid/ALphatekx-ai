@@ -35,11 +35,23 @@ const PROVIDERS = {
       timeoutMs: config.aiRequestTimeoutMs,
     }),
   },
+  groq: {
+    name: 'Groq',
+    defaultModel: 'llama-3.3-70b-versatile',
+    create: (key, env) => createOpenAICompatibleProvider({
+      id: 'groq',
+      name: 'Groq',
+      baseUrl: 'https://api.groq.com/openai/v1',
+      apiKey: key,
+      model: env.AI_MODEL_GROQ || 'llama-3.3-70b-versatile',
+      timeoutMs: config.aiRequestTimeoutMs,
+    }),
+  },
 }
 
 export async function saveUserApiKey({ userId, providerId, apiKey, database }) {
   const provider = PROVIDERS[providerId]
-  if (!provider) throw Object.assign(new Error('Choose OpenAI, Claude, or Gemini.'), { status: 400 })
+  if (!provider) throw Object.assign(new Error('Choose OpenAI, Claude, Gemini, or Groq.'), { status: 400 })
   if (typeof apiKey !== 'string' || apiKey.trim().length < 8 || apiKey.length > 2000 ||
     /[\r\n]/.test(apiKey)) {
     throw Object.assign(new Error('API key must be between 8 and 2000 characters.'), { status: 400 })
@@ -75,7 +87,7 @@ export async function listUserApiKeys({ userId, database }) {
 }
 
 export async function removeUserApiKey({ userId, providerId, database }) {
-  if (!PROVIDERS[providerId]) throw Object.assign(new Error('Choose OpenAI, Claude, or Gemini.'), { status: 400 })
+  if (!PROVIDERS[providerId]) throw Object.assign(new Error('Choose OpenAI, Claude, Gemini, or Groq.'), { status: 400 })
   const result = await database.query(
     'DELETE FROM integration_accounts WHERE user_id = $1 AND provider_id = $2',
     [userId, `byok:${providerId}`],
@@ -101,13 +113,18 @@ export async function withUserProviderRegistry({ userId, database, registry, env
     userProviders.set(providerId, definition.create(credentials.apiKey, env))
   }
   if (!userProviders.size) return operation(registry)
+  const mergedProviders = new Map(userProviders)
   const userRegistry = {
-    list: () => [...userProviders.values()].map(({ id, name, model, capabilities, isAvailable }) => ({
-      id, name, model, capabilities, available: isAvailable,
-      qualityScore: 3, latencyScore: 3, costScore: 3,
-    })),
-    get: (id) => userProviders.get(id) || null,
-    discoverModels: (id) => userProviders.get(id)?.discoverModels() || Promise.resolve([]),
+    list: () => [
+      ...registry.list().filter(({ id }) => !mergedProviders.has(id)),
+      ...[...mergedProviders.values()].map(({ id, name, model, capabilities, isAvailable }) => ({
+        id, name, model, capabilities, available: isAvailable,
+        keySuffix: null,
+        qualityScore: 3, latencyScore: 3, costScore: 3,
+      })),
+    ],
+    get: (id) => mergedProviders.get(id) || registry.get(id),
+    discoverModels: (id) => mergedProviders.get(id)?.discoverModels() || registry.discoverModels(id),
   }
   return operation(userRegistry)
 }

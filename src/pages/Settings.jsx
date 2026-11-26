@@ -24,7 +24,7 @@ export default function Settings() {
   const [theme, setThemeChoice] = useState(getTheme());
   const [keyProviders, setKeyProviders] = useState([]);
   const [savedKeys, setSavedKeys] = useState([]);
-  const [keyInputs, setKeyInputs] = useState({});
+  const [keyInputs, setKeyInputs] = useState(/** @type {Record<string, string>} */ ({}));
   const [keyBusy, setKeyBusy] = useState("");
   const [keyError, setKeyError] = useState("");
   const [keyNotice, setKeyNotice] = useState("");
@@ -68,9 +68,9 @@ export default function Settings() {
   useEffect(() => {
     api.providers.list()
       .then(({ providers }) => setAiProviders(
-        (providers || []).filter((provider) => ["openrouter", "gemini", "worker1"].includes(provider.id))
+        (providers || []).filter((provider) => ["workers_ai", "groq", "openrouter", "gemini"].includes(provider.id))
       ))
-      .catch(() => setProviderStatus({ openrouter: { status: "failed", error: "Provider status couldn't be loaded." } }));
+      .catch(() => setProviderStatus({ workers_ai: { status: "failed", error: "Provider status couldn't be loaded." } }));
   }, []);
 
   const testProvider = async (provider) => {
@@ -241,12 +241,19 @@ export default function Settings() {
         {settingsError && <p className="mt-3 text-[12.5px] text-destructive">{settingsError}</p>}
       </Section>
 
-      <Section title="AI provider" description="Biz uses OpenRouter first, then Gemini, then Worker 1.">
+      <Section title="AI provider" description="Workers AI is primary, with Groq and a deterministic local fallback.">
         <div className="max-w-xl space-y-3">
-          {aiProviders.map((provider, index) => {
+          {aiProviders.filter((provider) => ["workers_ai", "groq"].includes(provider.id)).map((provider) => {
             const status = providerStatus[provider.id];
-            const label = index === 0 ? "Primary" : index === 1 ? "Fallback 1" : "Fallback 2";
+            const label = provider.id === "workers_ai" ? "Primary" : "Fallback";
             const busy = providerTestBusy === provider.id;
+            const initialStatus = !status && provider.available
+              ? "ready"
+              : !status && provider.id === "groq"
+                ? "not_set"
+                : !status
+                  ? "not_configured"
+                  : status.status;
             return (
               <div key={provider.id} className="rounded-xl border border-border/70 p-3.5">
                 <div className="flex flex-wrap items-center justify-between gap-3">
@@ -254,22 +261,29 @@ export default function Settings() {
                     <p className="text-[13px] font-medium">{label}: {provider.name}</p>
                     <p className="mt-1 text-[11px] text-muted-foreground">
                       {provider.model || "Model not configured"}
-                      {provider.keySuffix ? ` · key ending in ${provider.keySuffix}` : ""}
-                      {provider.secretSource ? ` · ${provider.secretSource}` : ""}
                     </p>
                   </div>
                   <div className="flex items-center gap-2">
-                    {status?.status === "connected" && (
+                    {initialStatus === "connected" && (
                       <span className="text-[11.5px] font-medium text-emerald-600">
                         Connected{status.latencyMs ? ` · ${status.latencyMs} ms` : ""}
                       </span>
                     )}
-                    {status?.status === "failed" && (
+                    {initialStatus === "failed" && (
                       <span className="max-w-[220px] text-right text-[11.5px] text-destructive">
                         Failed{status.upstreamStatus ? ` · HTTP ${status.upstreamStatus}` : ""}
                       </span>
                     )}
-                    {status?.status === "testing" && (
+                    {initialStatus === "not_set" && (
+                      <span className="text-[11.5px] text-muted-foreground">Not Set</span>
+                    )}
+                    {initialStatus === "not_configured" && (
+                      <span className="text-[11.5px] text-destructive">Not configured</span>
+                    )}
+                    {initialStatus === "ready" && (
+                      <span className="text-[11.5px] text-muted-foreground">Ready to test</span>
+                    )}
+                    {initialStatus === "testing" && (
                       <span className="text-[11.5px] text-muted-foreground">Testing…</span>
                     )}
                     <button
@@ -289,15 +303,111 @@ export default function Settings() {
               </div>
             );
           })}
-          {!aiProviders.length && (
-            <p className="text-[12.5px] text-muted-foreground">No AI providers are configured on the server.</p>
+          <div className="rounded-xl border border-border/70 p-3.5">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="text-[13px] font-medium">Fallback: Local</p>
+                <p className="mt-1 text-[11px] text-muted-foreground">Deterministic templates · Always Ready</p>
+              </div>
+              <span className="text-[11.5px] font-medium text-emerald-600">Always Ready</span>
+            </div>
+          </div>
+          {(() => {
+            const saved = savedKeys.find((item) => item.provider === "groq");
+            const serverGroq = aiProviders.find((provider) => provider.id === "groq");
+            return (
+              <div className="rounded-xl border border-border/70 p-3.5">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <p className="text-[13px] font-medium">Groq API key</p>
+                    <p className="mt-1 text-[11px] text-muted-foreground">
+                      {saved
+                        ? `Saved key ending in ${saved.keySuffix}`
+                        : serverGroq?.keySuffix
+                          ? `Server key ending in ${serverGroq.keySuffix}`
+                          : "Optional · free key"}
+                    </p>
+                  </div>
+                  {saved && (
+                    <button
+                      type="button"
+                      disabled={Boolean(keyBusy)}
+                      onClick={() => deleteKey("groq")}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-border px-2.5 py-1.5 text-xs text-muted-foreground hover:bg-accent disabled:opacity-50"
+                    >
+                      {keyBusy === "groq" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+                      Remove
+                    </button>
+                  )}
+                </div>
+                <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+                  <input
+                    type="password"
+                    autoComplete="new-password"
+                    value={keyInputs.groq || ""}
+                    onChange={(event) => setKeyInputs((current) => ({ ...current, groq: event.target.value }))}
+                    placeholder="Paste your Groq API key"
+                    aria-label="Groq API key"
+                    className="h-10 min-w-0 flex-1 rounded-xl border border-border/80 bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground/70 focus:outline-none focus:ring-2 focus:ring-ring/20"
+                  />
+                  <button
+                    type="button"
+                    disabled={!keyInputs.groq?.trim() || Boolean(keyBusy)}
+                    onClick={() => saveKey("groq")}
+                    className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-primary px-4 text-xs font-medium text-primary-foreground disabled:opacity-50"
+                  >
+                    {keyBusy === "groq" && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                    Save key
+                  </button>
+                </div>
+                <a
+                  href="https://console.groq.com/keys"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="mt-2 inline-block text-[11.5px] font-medium text-primary hover:underline"
+                >
+                  Get free key at console.groq.com
+                </a>
+              </div>
+            );
+          })()}
+          {keyError && <p role="alert" className="text-xs text-destructive">{keyError}</p>}
+          {keyNotice && <p role="status" className="text-xs text-emerald-600">{keyNotice}</p>}
+          {!aiProviders.some((provider) => provider.id === "workers_ai") && (
+            <p className="text-[12.5px] text-muted-foreground">Workers AI credentials are not configured on the server.</p>
           )}
         </div>
       </Section>
 
+      <details className="mb-6 rounded-2xl border border-border/70 bg-card/30 p-4">
+        <summary className="cursor-pointer text-sm font-semibold">Advanced - Optional AI providers</summary>
+        <p className="mt-2 text-[12px] text-muted-foreground">
+          These providers are not part of Biz's primary fallback chain. They are used only when their server credentials and model are configured.
+        </p>
+        <div className="mt-3 max-w-xl space-y-2">
+          {["openrouter", "gemini"].map((id) => {
+            const provider = aiProviders.find((item) => item.id === id);
+            const saved = savedKeys.find((item) => item.provider === id);
+            return (
+              <div key={id} className="rounded-xl border border-border/70 px-3.5 py-3">
+                <p className="text-[13px] font-medium">{id === "openrouter" ? "OpenRouter" : "Gemini"}</p>
+                <p className="mt-1 text-[11px] text-muted-foreground">
+                  {provider?.model || "Not configured"}
+                  {(provider?.keySuffix || saved?.keySuffix)
+                    ? ` · key ending in ${provider?.keySuffix || saved?.keySuffix}`
+                    : ""}
+                  {provider?.secretSource ? ` · ${provider.secretSource}` : ""}
+                  {provider?.available ? " · Available" : " · Disabled"}
+                </p>
+              </div>
+            );
+          })}
+        </div>
+      </details>
+
       <Section title="Your API keys (BYOK)" description="Keys are encrypted on the server and never shown again after saving.">
         <div className="max-w-xl space-y-3">
-          {keyProviders.map((provider) => {
+          {keyProviders.filter((provider) => !["groq", "gemini"].includes(provider.id)).map((provider) => {
             const existing = savedKeys.find((item) => item.provider === provider.id);
             return (
               <div key={provider.id} className="rounded-xl border border-border/70 p-3.5">

@@ -67,6 +67,7 @@ import {
   listUserApiKeys,
   removeUserApiKey,
   saveUserApiKey,
+  withUserProviderRegistry,
 } from '../settings/byok.js'
 
 const app = express()
@@ -271,39 +272,70 @@ app.patch('/api/profile', requireUser, requireObjectBody, async (req, res, next)
   }
 })
 
-app.get('/api/providers', requireUser, (_req, res) => {
-  res.json({ providers: providerRegistry.list() })
+app.get('/api/providers', requireUser, async (req, res, next) => {
+  try {
+    await withUserProviderRegistry({
+      userId: req.user.id,
+      database: pool,
+      registry: providerRegistry,
+    }, async (registry) => res.json({ providers: registry.list() }))
+  } catch (error) {
+    next(error)
+  }
 })
 
 app.post('/api/providers/:providerId/test', requireUser, async (req, res, next) => {
   try {
-    const provider = providerRegistry.get(req.params.providerId)
-    if (!provider) return res.status(404).json({ error: 'AI provider was not found.' })
-    if (!provider.isAvailable) return res.status(503).json({
-      provider: provider.id,
-      status: 'failed',
-      error: `${provider.name} is not configured in the server environment.`,
-    })
-    const startedAt = Date.now()
-    try {
-      const result = await provider.generate({
-        messages: [{ role: 'user', content: 'Reply with exactly: connected' }],
-        signal: AbortSignal.timeout(30_000),
-      })
-      res.json({
-        provider: provider.id,
-        status: 'connected',
-        latencyMs: Date.now() - startedAt,
-        model: result.model || provider.model || null,
-      })
-    } catch (error) {
-      res.status(error.status && error.status !== 503 ? error.status : 503).json({
-        provider: provider.id,
-        status: 'failed',
-        upstreamStatus: error.upstreamStatus || null,
-        error: error.message || 'The provider test failed.',
-      })
+    if (!['workers_ai', 'groq'].includes(req.params.providerId)) {
+      return res.status(404).json({ error: 'AI provider was not found.' })
     }
+    const result = await withUserProviderRegistry({
+      userId: req.user.id,
+      database: pool,
+      registry: providerRegistry,
+    }, async (registry) => {
+      const provider = registry.get(req.params.providerId)
+      if (!provider) return {
+        statusCode: 404,
+        body: { error: 'AI provider was not found.' },
+      }
+      if (!provider.isAvailable) return {
+        statusCode: 503,
+        body: {
+          provider: provider.id,
+          status: 'failed',
+          error: `${provider.name} is not configured in the server environment.`,
+        },
+      }
+      const startedAt = Date.now()
+      try {
+        const completion = await provider.generate({
+          messages: [{ role: 'user', content: 'Reply with exactly: connected' }],
+          signal: AbortSignal.timeout(30_000),
+        })
+        return {
+          statusCode: 200,
+          provider: provider.id,
+          body: {
+            provider: provider.id,
+            status: 'connected',
+            latencyMs: Date.now() - startedAt,
+            model: completion.model || provider.model || null,
+          },
+        }
+      } catch (error) {
+        return {
+          statusCode: error.status && error.status !== 503 ? error.status : 503,
+          body: {
+            provider: provider.id,
+            status: 'failed',
+            upstreamStatus: error.upstreamStatus || null,
+            error: error.message || 'The provider test failed.',
+          },
+        }
+      }
+    })
+    res.status(result.statusCode).json(result.body)
   } catch (error) {
     next(error)
   }
