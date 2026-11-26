@@ -29,24 +29,42 @@ function mockRegistry(providers) {
   }
 }
 
-test('Workers AI 500 falls back to Groq and records provider use', async () => {
-  const workersAi = mockProvider('workers_ai', 'Cloudflare Workers AI', () => {
-    throw new ProviderError('Upstream unavailable', { provider: 'workers_ai', retryable: true, upstreamStatus: 500, status: 503 })
+test('Groq 500 falls back to Workers AI and records provider use', async () => {
+  const groq = mockProvider('groq', 'Groq', () => {
+    throw new ProviderError('Upstream unavailable', { provider: 'groq', retryable: true, upstreamStatus: 500, status: 503 })
   })
-  const groq = mockProvider('groq', 'Groq', () => ({ text: 'Groq answer', model: 'llama-3.3-70b-versatile' }))
-  const result = await invokeFallbackChain(mockRegistry([workersAi, groq]), workersAi, [
+  const workersAi = mockProvider('workers_ai', 'Cloudflare Workers AI', () => ({ text: 'Workers AI answer' }))
+  const result = await invokeFallbackChain(mockRegistry([workersAi, groq]), groq, [
     { role: 'user', content: 'hello' },
   ], { database: { query: async () => ({ rowCount: 1 }) } })
 
-  assert.equal(result.provider.id, 'groq')
-  assert.equal(result.result.text, 'Groq answer')
+  assert.equal(result.provider.id, 'workers_ai')
+  assert.equal(result.result.text, 'Workers AI answer')
   assert.equal(result.fallbackUsed, true)
-  assert.match(formatFallbackTrace(result.fallbackTrace), /Cloudflare Workers AI failed 500/)
-  assert.match(formatFallbackTrace(result.fallbackTrace), /Groq fallback/)
+  assert.match(formatFallbackTrace(result.fallbackTrace), /Groq failed 500/)
+  assert.match(formatFallbackTrace(result.fallbackTrace), /Cloudflare Workers AI fallback/)
 })
 
-test('OpenRouter 402 and Gemini 429 skip retries and use the next free providers', async () => {
+test('provider quota failures skip retries and advance in the configured free-tier order', async () => {
   const calls = []
+  const groq = mockProvider('groq', 'Groq', () => {
+    calls.push('groq')
+    throw new ProviderError('Groq unavailable', {
+      provider: 'groq',
+      retryable: false,
+      upstreamStatus: 401,
+      status: 502,
+    })
+  })
+  const workersAi = mockProvider('workers_ai', 'Cloudflare Workers AI', () => {
+    calls.push('workers_ai')
+    throw new ProviderError('Workers AI unavailable', {
+      provider: 'workers_ai',
+      retryable: false,
+      upstreamStatus: 401,
+      status: 502,
+    })
+  })
   const openrouter = mockProvider('openrouter', 'OpenRouter', () => {
     calls.push('openrouter')
     throw new ProviderError('Insufficient credits', {
@@ -65,23 +83,15 @@ test('OpenRouter 402 and Gemini 429 skip retries and use the next free providers
       status: 503,
     })
   })
-  const workersAi = mockProvider('workers_ai', 'Cloudflare Workers AI', () => {
-    calls.push('workers_ai')
-    return { text: 'Workers AI answer' }
-  })
-  const groq = mockProvider('groq', 'Groq', () => {
-    calls.push('groq')
-    return { text: 'Groq answer' }
-  })
-  const result = await invokeFallbackChain(mockRegistry([openrouter, gemini, workersAi, groq]), openrouter, [
+  const result = await invokeFallbackChain(mockRegistry([openrouter, gemini, workersAi, groq]), groq, [
     { role: 'user', content: 'hello' },
   ], { database: { query: async () => ({ rowCount: 1 }) } })
 
-  assert.deepEqual(calls, ['openrouter', 'gemini', 'workers_ai'])
-  assert.equal(result.provider.id, 'workers_ai')
+  assert.deepEqual(calls, ['groq', 'workers_ai', 'openrouter', 'gemini'])
+  assert.equal(result.provider.id, 'local-fallback')
   assert.match(formatFallbackTrace(result.fallbackTrace), /OpenRouter free quota used/)
   assert.match(formatFallbackTrace(result.fallbackTrace), /Google Gemini free quota used/)
-  assert.match(formatFallbackTrace(result.fallbackTrace), /tried Cloudflare Workers AI fallback/)
+  assert.match(formatFallbackTrace(result.fallbackTrace), /local fallback/)
   assert.doesNotMatch(formatFallbackTrace(result.fallbackTrace), /insufficient credits|add \$5/i)
   assert.equal(freeQuotaFailureMessage('openrouter', 402), 'Free quota used, tried next fallback.')
   assert.equal(freeQuotaFailureMessage('gemini', 429), 'Free quota used, tried next fallback.')
@@ -102,7 +112,14 @@ test('ordinary text retries do not force a JSON response', async () => {
     }
     return { text: 'Recovered answer' }
   })
-  const groq = mockProvider('groq', 'Groq', () => ({ text: 'Groq answer' }))
+  const groq = mockProvider('groq', 'Groq', () => {
+    throw new ProviderError('Groq unavailable', {
+      provider: 'groq',
+      retryable: false,
+      upstreamStatus: 401,
+      status: 502,
+    })
+  })
   const result = await invokeFallbackChain(mockRegistry([workersAi, groq]), workersAi, [
     { role: 'user', content: 'Explain the next step.' },
   ], { database: { query: async () => ({ rowCount: 1 }) } })
@@ -241,26 +258,24 @@ test('provider failures return a useful local fallback', async () => {
 })
 
 test('invalid JSON retries once with a short-only JSON prompt, then falls back', async () => {
-  let openrouterCalls = 0
-  const workersAi = mockProvider('workers_ai', 'Cloudflare Workers AI', () => {
-    return { text: 'not json', model: 'workers-ai-model' }
-  })
+  let groqCalls = 0
   const groq = mockProvider('groq', 'Groq', () => {
-    openrouterCalls += 1
-    return ({
-    text: '{"goal":"Reply helpfully"}',
-    model: 'groq-model',
-    })
+    groqCalls += 1
+    return { text: 'not json', model: 'gpt-oss-120b' }
   })
-  const result = await invokeFallbackChain(mockRegistry([workersAi, groq]), workersAi, [
+  const workersAi = mockProvider('workers_ai', 'Cloudflare Workers AI', () => ({
+    text: '{"goal":"Reply helpfully"}',
+    model: 'workers-ai-model',
+  }))
+  const result = await invokeFallbackChain(mockRegistry([workersAi, groq]), groq, [
     { role: 'user', content: 'Reply helpfully' },
   ], {
     jsonSchema: { type: 'OBJECT' },
     database: { query: async () => ({ rowCount: 1 }) },
   })
 
-  assert.equal(openrouterCalls, 1)
-  assert.equal(result.provider.id, 'groq')
+  assert.equal(groqCalls, 2)
+  assert.equal(result.provider.id, 'workers_ai')
   assert.equal(JSON.parse(result.result.text).goal, 'Reply helpfully')
 })
 

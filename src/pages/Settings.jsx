@@ -15,10 +15,10 @@ const THEMES = [
 ];
 
 const AI_PROVIDER_ORDER = [
-  { id: "openrouter", label: "Primary" },
-  { id: "gemini", label: "Fallback 1" },
-  { id: "workers_ai", label: "Fallback 2" },
-  { id: "groq", label: "Fallback 3" },
+  { id: "groq", label: "Primary" },
+  { id: "workers_ai", label: "Fallback 1" },
+  { id: "openrouter", label: "Fallback 2" },
+  { id: "gemini", label: "Fallback 3" },
 ];
 
 export default function Settings() {
@@ -87,12 +87,15 @@ export default function Settings() {
       const result = await api.providers.test(provider.id);
       setProviderStatus((current) => ({ ...current, [provider.id]: result }));
     } catch (requestError) {
+      const errorMessage = requestError.message === "The request could not be completed."
+        ? `Provider test failed${requestError.status ? ` (HTTP ${requestError.status})` : ""}.`
+        : requestError.message;
       setProviderStatus((current) => ({
         ...current,
         [provider.id]: {
           status: "failed",
           upstreamStatus: requestError.upstreamStatus,
-          error: requestError.message,
+          error: errorMessage,
         },
       }));
     } finally {
@@ -248,7 +251,7 @@ export default function Settings() {
         {settingsError && <p className="mt-3 text-[12.5px] text-destructive">{settingsError}</p>}
       </Section>
 
-      <Section title="AI provider" description="Free-tier chain: OpenRouter → Gemini → Workers AI → Groq → local fallback.">
+      <Section title="AI provider" description="Free-tier chain: Groq (openai/gpt-oss-120b) → Workers AI → OpenRouter → Gemini → local fallback.">
         <div className="max-w-xl space-y-3">
           {AI_PROVIDER_ORDER.map(({ id, label }) => {
             const provider = aiProviders.find((item) => item.id === id);

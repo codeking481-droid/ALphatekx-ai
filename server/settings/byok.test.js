@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { listUserApiKeys, saveUserApiKey, withUserProviderRegistry } from './byok.js'
+import { listSupportedApiKeyProviders, listUserApiKeys, saveUserApiKey, withUserProviderRegistry } from './byok.js'
 
 test('BYOK credentials are encrypted and only the last four characters are returned', async () => {
   let stored
@@ -37,6 +37,10 @@ test('BYOK credentials are encrypted and only the last four characters are retur
 })
 
 test('a saved user provider overrides its default and preserves other providers without exposing keys', async () => {
+  assert.equal(
+    listSupportedApiKeyProviders().find(({ id }) => id === 'groq').defaultModel,
+    'openai/gpt-oss-120b',
+  )
   const { encryptCredential } = await import('../integrations/credential-vault.js')
   const sealed = encryptCredential(JSON.stringify({ apiKey: 'sk-user-owned-9876' }))
   const database = {
@@ -60,7 +64,7 @@ test('a saved user provider overrides its default and preserves other providers 
     env: { AI_MODEL_OPENAI: 'test-model', AI_MODEL_GROQ: 'paid-groq-model' },
   }, async (registry) => {
     selected = registry.list()
-    assert.equal(registry.get('groq').model, 'llama-3.3-70b-versatile')
+    assert.equal(registry.get('groq').model, 'openai/gpt-oss-120b')
     assert.equal(registry.get('workers_ai'), fallback)
   })
 

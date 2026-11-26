@@ -4,6 +4,8 @@ import { createAnthropicProvider } from '../providers/anthropic.js'
 import { createGeminiProvider } from '../providers/gemini.js'
 import { createOpenAICompatibleProvider } from '../providers/openai-compatible.js'
 
+const GROQ_FREE_MODEL = 'openai/gpt-oss-120b'
+
 const PROVIDERS = {
   openai: {
     name: 'OpenAI',
@@ -37,13 +39,13 @@ const PROVIDERS = {
   },
   groq: {
     name: 'Groq',
-    defaultModel: 'llama-3.3-70b-versatile',
+    defaultModel: GROQ_FREE_MODEL,
     create: (key) => createOpenAICompatibleProvider({
       id: 'groq',
       name: 'Groq',
       baseUrl: 'https://api.groq.com/openai/v1',
       apiKey: key,
-      model: 'llama-3.3-70b-versatile',
+      model: GROQ_FREE_MODEL,
       timeoutMs: config.aiRequestTimeoutMs,
     }),
   },

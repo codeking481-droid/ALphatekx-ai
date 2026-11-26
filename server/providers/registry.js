@@ -7,11 +7,10 @@ import { createCloudflareWorkerProvider } from './cloudflare-worker.js'
 import { createCloudflareWorkersAiProvider } from './cloudflare-workers-ai.js'
 
 const OPENROUTER_FREE_MODELS = [
-  'meta-llama/llama-3.1-8b-instruct:free',
-  'google/gemma-3-27b-it:free',
+  'google/gemma-4-31b-it:free',
 ]
 const GEMINI_FREE_MODEL = 'gemini-2.5-flash'
-const GROQ_FREE_MODEL = 'llama-3.3-70b-versatile'
+const GROQ_FREE_MODEL = 'openai/gpt-oss-120b'
 const WORKERS_AI_FREE_MODELS = [
   '@cf/meta/llama-3.3-70b-instruct-fp8-fast',
   '@cf/qwen/qwen2.5-coder-32b-instruct',

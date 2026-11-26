@@ -2,7 +2,7 @@ import { log } from '../observability/logger.js'
 import { ProviderError } from './errors.js'
 import { invokeModel } from '../intelligence/model-invocation.js'
 
-export const FALLBACK_PROVIDER_IDS = ['openrouter', 'gemini', 'workers_ai', 'groq']
+export const FALLBACK_PROVIDER_IDS = ['groq', 'workers_ai', 'openrouter', 'gemini']
 
 export const localFallbackProvider = {
   id: 'local-fallback',
