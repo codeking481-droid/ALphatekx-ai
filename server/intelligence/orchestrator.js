@@ -20,7 +20,6 @@ import { createScheduleOccurrences, parseScheduleIntent } from './scheduling.js'
 import { resolveLinkedInPostIntent } from './linkedin-post-intent.js'
 import { validatePlanGraph } from './plan-graph.js'
 import { supersedePendingApproval } from '../tools/executor.js'
-import { formatFallbackTrace } from '../providers/fallback-chain.js'
 import {
   isMotionGraphicsRegeneration,
   isMotionGraphicsRequest,
@@ -297,9 +296,6 @@ export async function processChatRequest({
   })
   let activeProvider = understanding.provider
   let responseModel = understanding.model
-  let fallbackTraces = understanding.fallbackUsed && understanding.fallbackTrace
-    ? [understanding.fallbackTrace]
-    : []
   let planGraph = null
   let executionReport = null
   let reviewSummaries = []
@@ -336,7 +332,6 @@ export async function processChatRequest({
       },
     })
     planGraph = planning.planGraph
-    if (planning.fallbackUsed && planning.fallbackTrace) fallbackTraces.push(planning.fallbackTrace)
     activeProvider = planning.provider
     responseModel = planning.model
     if (generatedAnimationRequest) {
@@ -485,22 +480,11 @@ export async function processChatRequest({
     )
     activeProvider = completion.provider
     responseModel = completion.result.model || activeProvider.model
-    if (completion.fallbackUsed && completion.fallbackTrace) fallbackTraces.push(completion.fallbackTrace)
     const evaluation = evaluateProviderResult(completion.result)
     if (!evaluation.accepted) throw new Error('The configured AI provider returned an empty response.')
     reply = completion.result.text.trim()
   }
 
-  const fallbackNotice = [...new Set(fallbackTraces.map((trace) => {
-    const outcomeTrace = activeProvider.id !== 'local-fallback' && trace.at(-1)?.status === 'local'
-      ? [
-          ...trace.slice(0, -1),
-          { name: activeProvider.name, provider: activeProvider.id, status: 'used' },
-        ]
-      : trace
-    return formatFallbackTrace(outcomeTrace)
-  }).filter(Boolean))].join('\n')
-  if (fallbackNotice && reply) reply = `${fallbackNotice}\n\n${reply}`
   const clarificationAcknowledgement = buildClarificationAcknowledgement(clarificationAnswers)
   if (clarificationAcknowledgement && reply) reply = `${clarificationAcknowledgement}\n\n${reply}`
 

@@ -1203,6 +1203,7 @@ test('provider retry is bounded to one fallback during structured understanding'
     'mock-fallback:synthesis',
   ])
   assert.equal(result.provider, 'mock-fallback')
+  assert.equal(result.reply, 'Here is the requested response.')
   assert.equal(database.state.modelUsage.length, 4)
 })
 
