@@ -6,7 +6,8 @@ import { isMotionGraphicsRequest } from '../intelligence/motion-graphics-intent.
 
 const MAX_RATE_LIMIT_RETRY_WAIT_MS = 15_000
 
-export const FALLBACK_PROVIDER_IDS = ['groq', 'workers_ai', 'openrouter', 'gemini']
+export const FALLBACK_PROVIDER_IDS = ['groq', 'workers_ai', 'openrouter', 'gemini', 'worker1']
+export const PRIMARY_PROVIDER_IDS = FALLBACK_PROVIDER_IDS.filter((id) => id !== 'worker1')
 
 export const localFallbackProvider = {
   id: 'local-fallback',
@@ -58,7 +59,7 @@ export async function invokeFallbackChain(registry, preferredProvider, messages,
 
   const trace = []
   const ordered = []
-  const hasPrimaryChain = FALLBACK_PROVIDER_IDS.some((id) => registry.get(id))
+  const hasPrimaryChain = PRIMARY_PROVIDER_IDS.some((id) => registry.get(id))
   let lastError = null
   const candidateIds = hasPrimaryChain
     ? FALLBACK_PROVIDER_IDS

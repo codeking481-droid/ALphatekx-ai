@@ -287,7 +287,7 @@ app.get('/api/providers', requireUser, async (req, res, next) => {
 
 app.post('/api/providers/:providerId/test', requireUser, async (req, res, next) => {
   try {
-    if (!['openrouter', 'gemini', 'workers_ai', 'groq'].includes(req.params.providerId)) {
+    if (!['openrouter', 'gemini', 'workers_ai', 'groq', 'worker1'].includes(req.params.providerId)) {
       return res.status(404).json({ error: 'AI provider was not found.' })
     }
     const result = await withUserProviderRegistry({

@@ -19,6 +19,7 @@ const AI_PROVIDER_ORDER = [
   { id: "workers_ai", label: "Fallback 1" },
   { id: "openrouter", label: "Fallback 2" },
   { id: "gemini", label: "Fallback 3" },
+  { id: "worker1", label: "Fallback 4" },
 ];
 
 export default function Settings() {
@@ -75,7 +76,7 @@ export default function Settings() {
   useEffect(() => {
     api.providers.list()
       .then(({ providers }) => setAiProviders(
-        (providers || []).filter((provider) => ["workers_ai", "groq", "openrouter", "gemini"].includes(provider.id))
+        (providers || []).filter((provider) => ["workers_ai", "groq", "openrouter", "gemini", "worker1"].includes(provider.id))
       ))
       .catch(() => setProviderStatus({ workers_ai: { status: "failed", error: "Provider status couldn't be loaded." } }));
   }, []);
@@ -251,7 +252,7 @@ export default function Settings() {
         {settingsError && <p className="mt-3 text-[12.5px] text-destructive">{settingsError}</p>}
       </Section>
 
-      <Section title="AI provider" description="Free-tier chain: Groq (openai/gpt-oss-120b) → Workers AI → OpenRouter → Gemini → local fallback.">
+      <Section title="AI provider" description="Fallback chain: Groq → Workers AI → OpenRouter → Gemini → configured AI Worker 1 → local template.">
         <div className="max-w-xl space-y-3">
           {AI_PROVIDER_ORDER.map(({ id, label }) => {
             const provider = aiProviders.find((item) => item.id === id);
@@ -273,12 +274,16 @@ export default function Settings() {
                   <div>
                     <p className="flex items-center gap-2 text-[13px] font-medium">
                       {label}: {provider.name}
-                      <span className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[9px] font-semibold tracking-wide text-emerald-600">
-                        FREE
-                      </span>
+                      {provider.id !== "worker1" && (
+                        <span className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[9px] font-semibold tracking-wide text-emerald-600">
+                          FREE
+                        </span>
+                      )}
                     </p>
                     <p className="mt-1 text-[11px] text-muted-foreground">
-                      {provider.model || "Model not configured"}
+                      {provider.model || (provider.id === "worker1"
+                        ? provider.available ? "Configured Worker endpoint" : "Worker URL not configured"
+                        : "Model not configured")}
                       {provider.secretSource ? ` · ${provider.secretSource}` : ""}
                       {keySuffix ? ` · key ending in ${keySuffix}` : ""}
                     </p>
@@ -326,7 +331,7 @@ export default function Settings() {
           <div className="rounded-xl border border-border/70 p-3.5">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
-                <p className="text-[13px] font-medium">Fallback 4: Local</p>
+                <p className="text-[13px] font-medium">Fallback 5: Local</p>
                 <p className="mt-1 text-[11px] text-muted-foreground">Deterministic templates · Always Ready</p>
               </div>
               <span className="text-[11.5px] font-medium text-emerald-600">Always Ready</span>

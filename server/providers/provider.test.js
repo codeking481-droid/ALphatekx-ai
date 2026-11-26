@@ -158,7 +158,7 @@ test('provider selector returns deterministic local fallback when no AI is confi
   assert.equal(selectProvider(registry).id, 'local-fallback')
 })
 
-test('configured AI workers call their URL directly without a key or model', async () => {
+test('configured AI Worker 1 joins the fallback chain while Worker 2 stays excluded', async () => {
   const registry = createProviderRegistry({
     AI_PROVIDER_URL_1: 'https://worker-one.workers.dev',
     AI_PROVIDER_URL_2: 'https://worker-two.workers.dev',
@@ -168,7 +168,7 @@ test('configured AI workers call their URL directly without a key or model', asy
     ['worker1', true],
     ['worker2', true],
   ])
-  assert.equal(selectProvider(registry, { preferred: 'worker1' }).id, 'local-fallback')
+  assert.equal(selectProvider(registry, { preferred: 'worker1' }).id, 'worker1')
   assert.equal(selectProvider(registry, { preferred: 'worker2', exclude: ['worker1'] }).id, 'local-fallback')
 
   const originalFetch = globalThis.fetch
@@ -292,6 +292,9 @@ test('provider selector respects the configured fallback order', () => {
 
   const geminiRegistry = createProviderRegistry({ GEMINI_API_KEY: 'AIzaSy1234567890abcd' })
   assert.equal(selectProvider(geminiRegistry).id, 'gemini')
+
+  const workerRegistry = createProviderRegistry({ AI_PROVIDER_URL_1: 'https://worker-one.workers.dev' })
+  assert.equal(selectProvider(workerRegistry).id, 'worker1')
 })
 
 test('Workers AI and Groq are available using only their server environment configuration', () => {

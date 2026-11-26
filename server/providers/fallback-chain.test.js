@@ -194,6 +194,39 @@ test('provider quota failures skip retries and advance in the configured free-ti
   assert.equal(freeQuotaFailureMessage('groq', 402), null)
 })
 
+test('configured AI Worker 1 is tried after Gemini and before the local template', async () => {
+  const calls = []
+  const failed = (id, name, status) => mockProvider(id, name, () => {
+    calls.push(id)
+    throw new ProviderError(`${name} unavailable`, {
+      provider: id,
+      retryable: false,
+      upstreamStatus: status,
+      status: 502,
+    })
+  })
+  const groq = failed('groq', 'Groq', 429)
+  const workersAi = failed('workers_ai', 'Cloudflare Workers AI', 401)
+  const openrouter = failed('openrouter', 'OpenRouter', 429)
+  const gemini = failed('gemini', 'Google Gemini', 403)
+  const worker1 = mockProvider('worker1', 'AI Worker 1', () => {
+    calls.push('worker1')
+    return { text: 'Worker 1 generated answer' }
+  })
+
+  const result = await invokeFallbackChain(
+    mockRegistry([worker1, gemini, openrouter, workersAi, groq]),
+    groq,
+    [{ role: 'user', content: 'Create a new motion graphic.' }],
+    { database: { query: async () => ({ rowCount: 1 }) } },
+  )
+
+  assert.deepEqual(calls, ['groq', 'workers_ai', 'openrouter', 'gemini', 'worker1'])
+  assert.equal(result.provider.id, 'worker1')
+  assert.equal(result.result.text, 'Worker 1 generated answer')
+  assert.match(formatFallbackTrace(result.fallbackTrace), /tried AI Worker 1 fallback/)
+})
+
 test('ordinary text retries do not force a JSON response', async () => {
   const requests = []
   const workersAi = mockProvider('workers_ai', 'Cloudflare Workers AI', ({ messages }) => {
