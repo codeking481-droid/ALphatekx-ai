@@ -58,7 +58,7 @@ Provider adapters and registry are in `server/providers/`. Biz uses this free-ti
 
 Transient provider errors are retried once with a shorter prompt; OpenRouter HTTP 402 and Gemini HTTP 429 quota errors skip directly to the next provider. Chat reports quota exhaustion and the fallback used without asking the user to buy credits. Provider logs include provider, model, upstream status, and a sanitized error message; API tokens are never returned in provider status responses. Settings → AI provider can test Groq, Workers AI, OpenRouter, and Gemini with a short model request.
 
-When a provider is unconfigured, chat identifies it as skipped instead of implying it was tried. A same-provider retry that recovers is not described as a provider fallback.
+When a provider is unconfigured, chat identifies it as skipped instead of implying it was tried. A same-provider retry that recovers is not described as a provider fallback. Groq requests use low reasoning effort to conserve its free-tier token budget, honor a `Retry-After` delay up to 15 seconds, and move on to the next provider rather than retrying a 429 immediately when no usable delay is provided.
 
 Capability declarations are intentionally conservative. Model discovery is available through the authenticated providers API where the upstream provider exposes it. Image understanding, arbitrary document extraction, embeddings, and complete structured-output support are not enabled in the initial chat path. File uploads are private to the owning account; chat extraction currently supports plain text, Markdown, CSV, and JSON only. The local filesystem upload adapter requires a persistent, access-controlled volume in production.
 

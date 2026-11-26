@@ -2,6 +2,8 @@ import { log } from '../observability/logger.js'
 import { ProviderError } from './errors.js'
 import { invokeModel } from '../intelligence/model-invocation.js'
 
+const MAX_RATE_LIMIT_RETRY_WAIT_MS = 15_000
+
 export const FALLBACK_PROVIDER_IDS = ['groq', 'workers_ai', 'openrouter', 'gemini']
 
 export const localFallbackProvider = {
@@ -149,6 +151,11 @@ export async function invokeFallbackChain(registry, preferredProvider, messages,
             : redactSecrets(error.message || 'Provider request failed.'),
         })
         if (!freeQuotaFailure && error.retryable !== false && attempt === 1) {
+          if (upstreamStatus === 429) {
+            const retryDelayMs = parseRetryAfter(error.retryAfter)
+            if (retryDelayMs === null) break
+            await waitForRetry(retryDelayMs, options.signal)
+          }
           continue
         }
         if (!hasPrimaryChain && error.retryable === false) throw error
@@ -190,6 +197,38 @@ function shorterRequestSignal(signal, timeoutMs) {
     source.addEventListener('abort', () => controller.abort(source.reason), { once: true })
   }
   return controller.signal
+}
+
+function parseRetryAfter(value) {
+  if (typeof value !== 'string' || !value.trim()) return null
+  const seconds = Number(value)
+  const delayMs = Number.isFinite(seconds) ? seconds * 1000 : Date.parse(value) - Date.now()
+  if (!Number.isFinite(delayMs) || delayMs > MAX_RATE_LIMIT_RETRY_WAIT_MS) return null
+  return Math.max(0, Math.ceil(delayMs))
+}
+
+function waitForRetry(delayMs, signal) {
+  if (!delayMs) return Promise.resolve()
+  return new Promise((resolve, reject) => {
+    let timer
+    const cleanup = () => {
+      clearTimeout(timer)
+      signal?.removeEventListener('abort', abort)
+    }
+    const abort = () => {
+      cleanup()
+      reject(signal.reason || new Error('Model request was cancelled.'))
+    }
+    if (signal?.aborted) {
+      abort()
+      return
+    }
+    timer = setTimeout(() => {
+      cleanup()
+      resolve()
+    }, delayMs)
+    signal?.addEventListener('abort', abort, { once: true })
+  })
 }
 
 function shortenMessages(messages, requiresJson) {

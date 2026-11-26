@@ -41,6 +41,7 @@ export function createOpenAICompatibleProvider({
               model: activeModel,
               messages,
               ...(['groq', 'openrouter'].includes(id) ? { temperature: 0.3 } : {}),
+              ...(id === 'groq' ? { reasoning_effort: 'low' } : {}),
               ...(jsonSchema ? { response_format: { type: 'json_object' } } : {}),
               ...(tools?.length ? { tools, tool_choice: 'auto' } : {}),
             }),

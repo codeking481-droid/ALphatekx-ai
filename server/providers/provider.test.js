@@ -34,6 +34,25 @@ test('provider adapter sends the selected model and returns normalized text', as
   }
 })
 
+test('Groq uses its configured primary model with low reasoning effort', async () => {
+  const provider = createProviderRegistry({ GROQ_API_KEY: 'gsk_test-provider-secret' }).get('groq')
+  const originalFetch = globalThis.fetch
+  let request
+  globalThis.fetch = async (_url, options) => {
+    request = JSON.parse(options.body)
+    return new Response(JSON.stringify({
+      choices: [{ message: { content: 'hello' } }],
+    }))
+  }
+  try {
+    await provider.generate({ messages: [{ role: 'user', content: 'hello' }] })
+    assert.equal(request.model, 'openai/gpt-oss-120b')
+    assert.equal(request.reasoning_effort, 'low')
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
 test('compatible provider errors include sanitized upstream details', async () => {
   const provider = makeProvider({ id: 'groq', apiKey: 'gsk_test-provider-secret' })
   const originalFetch = globalThis.fetch

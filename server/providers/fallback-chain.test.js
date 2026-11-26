@@ -54,6 +54,7 @@ test('a same-provider retry is reported as recovery, not as a fallback', async (
         provider: 'groq',
         retryable: true,
         upstreamStatus: 429,
+        retryAfter: '0',
         status: 503,
       })
     }
@@ -65,6 +66,55 @@ test('a same-provider retry is reported as recovery, not as a fallback', async (
 
   assert.equal(result.fallbackUsed, false)
   assert.equal(formatFallbackTrace(result.fallbackTrace), 'Groq failed 429; Groq recovered after retry.')
+})
+
+test('a short Retry-After is respected before retrying Groq', async () => {
+  let calls = 0
+  let secondCallAt
+  const firstCallAt = Date.now()
+  const groq = mockProvider('groq', 'Groq', () => {
+    calls += 1
+    if (calls === 1) {
+      throw new ProviderError('Rate limited', {
+        provider: 'groq',
+        retryable: true,
+        upstreamStatus: 429,
+        retryAfter: '0.03',
+        status: 503,
+      })
+    }
+    secondCallAt = Date.now()
+    return { text: 'Recovered answer' }
+  })
+  const result = await invokeFallbackChain(mockRegistry([groq]), groq, [
+    { role: 'user', content: 'hello' },
+  ], { database: { query: async () => ({ rowCount: 1 }) } })
+
+  assert.equal(result.result.text, 'Recovered answer')
+  assert.ok(secondCallAt - firstCallAt >= 20)
+})
+
+test('a Groq 429 without Retry-After advances instead of retrying immediately', async () => {
+  const calls = []
+  const groq = mockProvider('groq', 'Groq', () => {
+    calls.push('groq')
+    throw new ProviderError('Rate limited', {
+      provider: 'groq',
+      retryable: true,
+      upstreamStatus: 429,
+      status: 503,
+    })
+  })
+  const workersAi = mockProvider('workers_ai', 'Cloudflare Workers AI', () => {
+    calls.push('workers_ai')
+    return { text: 'Workers AI answer' }
+  })
+  const result = await invokeFallbackChain(mockRegistry([groq, workersAi]), groq, [
+    { role: 'user', content: 'hello' },
+  ], { database: { query: async () => ({ rowCount: 1 }) } })
+
+  assert.deepEqual(calls, ['groq', 'workers_ai'])
+  assert.equal(result.provider.id, 'workers_ai')
 })
 
 test('unconfigured providers are identified when the chain advances past them', async () => {
