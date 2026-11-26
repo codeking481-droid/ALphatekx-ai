@@ -220,7 +220,7 @@ export default function Approvals() {
                   <div className="min-w-0">
                     <p className="text-sm font-medium">{approval.description}</p>
                     <p className="mt-1 text-xs text-muted-foreground">
-                      Tool: {approval.tool_id} · Expires {new Date(approval.expires_at).toLocaleString()}
+                      Tool: {approval.tool_name || approval.tool_id} · Expires {new Date(approval.expires_at).toLocaleString()}
                     </p>
                   </div>
                   <span className="rounded-full bg-muted px-2.5 py-1 text-[11px] text-muted-foreground">

@@ -5,6 +5,8 @@ const tools = new Map()
 export function registerTool(tool) {
   if (typeof tool?.id !== 'string' || !/^[a-z0-9][a-z0-9._-]{0,63}$/i.test(tool.id) ||
     typeof tool.description !== 'string' || !tool.description.trim() ||
+    (tool.name !== undefined && (typeof tool.name !== 'string' || !tool.name.trim() || tool.name.length > 100)) ||
+    (tool.connector !== undefined && (typeof tool.connector !== 'string' || !/^[a-z0-9][a-z0-9_-]{0,63}$/i.test(tool.connector))) ||
     !tool.inputSchema || typeof tool.inputSchema !== 'object' || Array.isArray(tool.inputSchema) ||
     typeof tool.execute !== 'function' ||
     (tool.requiresApproval !== undefined && typeof tool.requiresApproval !== 'boolean') ||
@@ -31,6 +33,8 @@ export function registerTool(tool) {
   if (tools.has(tool.id)) throw new Error(`Tool "${tool.id}" is already registered.`)
   tools.set(tool.id, Object.freeze({
     ...tool,
+    name: tool.name?.trim() || humanizeToolId(tool.id),
+    connector: tool.connector || 'builtin',
     inputSchema,
     permissions: Object.freeze([...tool.permissions]),
     requiresApproval: tool.requiresApproval !== false,
@@ -38,6 +42,11 @@ export function registerTool(tool) {
     timeoutMs: tool.timeoutMs || 30000,
   }))
   return () => tools.delete(tool.id)
+}
+
+function humanizeToolId(id) {
+  return id.split(/[._-]+/).filter(Boolean).map((part) =>
+    part.charAt(0).toUpperCase() + part.slice(1)).join(' ')
 }
 
 export function getTool(id) {
@@ -83,7 +92,9 @@ export function parseApprovalDescription(value) {
 }
 
 export function serializeApprovalDescription(tool, input) {
-  const description = tool.describeAction ? tool.describeAction(input) : tool.description
+  const description = tool.describeAction
+    ? tool.describeAction(input)
+    : `${tool.name}:\n${JSON.stringify(redactApprovalInput(input), null, 2)}`
   if (typeof description !== 'string' || !description.trim()) {
     throw new TypeError(`Tool "${tool.id}" produced an invalid approval description.`)
   }
@@ -91,6 +102,17 @@ export function serializeApprovalDescription(tool, input) {
     description,
     fingerprint: getToolActionFingerprint(tool, input),
   })
+}
+
+function redactApprovalInput(value) {
+  if (Array.isArray(value)) return value.map(redactApprovalInput)
+  if (!value || typeof value !== 'object') return value
+  return Object.fromEntries(Object.entries(value).map(([key, item]) => [
+    key,
+    /(?:token|secret|password|api[_-]?key|authorization|cookie)/i.test(key)
+      ? '[redacted]'
+      : redactApprovalInput(item),
+  ]))
 }
 
 function freezeDeep(value) {

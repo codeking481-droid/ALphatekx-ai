@@ -104,7 +104,7 @@ test('model PlanGraphs normalize malformed descriptive fields before strict vali
   }
 })
 
-test('model PlanGraphs repair LinkedIn tool references from an allowlisted valid input', () => {
+test('model PlanGraphs collapse dependent tasks into one LinkedIn tool task', () => {
   const unregister = registerLinkedInTools()
   try {
     const graph = parsePlanGraph(JSON.stringify({
@@ -129,20 +129,104 @@ test('model PlanGraphs repair LinkedIn tool references from an allowlisted valid
           toolInput: { text: 'Biz is launching: an AI that never sleeps.' },
         }),
       ],
-    }), { allowedToolIds: ['linkedin_post'] })
+    }), { allowedToolIds: ['linkedin_post'], requiresExternalAction: true })
 
-    assert.deepEqual(graph.tasks[0].acceptanceCriteria, ['The post highlights Biz.'])
-    assert.equal(graph.tasks[0].requiredCapability, 'reasoning')
-    assert.equal(graph.tasks[0].specialistRole, 'general')
-    assert.deepEqual(graph.tasks[1].acceptanceCriteria, ['The post is published after approval.'])
-    assert.ok(graph.tasks[1].requiredInputs.some((input) =>
-      input.kind === 'tool_output' && input.toolId === 'linkedin_post'))
-    assert.equal(graph.tasks[1].toolInput.text, 'Biz is launching: an AI that never sleeps.')
+    assert.equal(graph.tasks.length, 1)
+    assert.equal(graph.tasks[0].id, 'tool-task-1')
+    assert.equal(graph.tasks[0].type, 'tool')
+    assert.deepEqual(graph.tasks[0].dependencies, [])
+    assert.deepEqual(graph.tasks[0].acceptanceCriteria, ['The post is published after approval.'])
+    assert.equal(graph.tasks[0].requiredCapability, 'tool_execution')
+    assert.equal(graph.tasks[0].specialistRole, 'execution')
+    assert.deepEqual(graph.tasks[0].requiredInputs, [{
+      kind: 'tool_output',
+      description: 'Result from linkedin_post.',
+      toolId: 'linkedin_post',
+    }])
+    assert.equal(graph.tasks[0].toolInput.text, 'Biz is launching: an AI that never sleeps.')
   } finally {
     unregister.forEach((remove) => remove())
   }
 })
 
+test('external-action task collapse is connector-agnostic for Gmail', () => {
+  const unregister = registerTool({
+    id: 'gmail_send',
+    name: 'Send Gmail Message',
+    connector: 'gmail',
+    description: 'Send an email after user approval.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        to: { type: 'string', minLength: 1 },
+        subject: { type: 'string', minLength: 1 },
+        body: { type: 'string', minLength: 1 },
+      },
+      required: ['to', 'subject', 'body'],
+      additionalProperties: false,
+    },
+    permissions: ['tool:approved'],
+    requiresApproval: true,
+    validate: (input) => ['to', 'subject', 'body'].every((key) =>
+      typeof input?.[key] === 'string' && input[key].trim().length > 0),
+    execute: async () => ({ sent: true }),
+  })
+  try {
+    const graph = parsePlanGraph(JSON.stringify({
+      tasks: [
+        task('draft-email', {
+          description: 'Draft the requested email.',
+          acceptanceCriteria: 'Email is clear and concise.',
+          toolInput: { body: 'Biz is launching: an AI that never sleeps.' },
+        }),
+        task('send-email', {
+          description: 'Send the email after user approval.',
+          type: 'tool',
+          requiredInputs: [
+            {
+              kind: 'task_output',
+              description: 'Email draft.',
+              sourceTaskId: 'draft-email',
+            },
+            {
+              kind: 'tool_output',
+              description: 'Gmail delivery result.',
+              toolId: 'gmail_send',
+            },
+          ],
+          dependencies: ['draft-email'],
+          acceptanceCriteria: null,
+          requiredCapability: 'invalid_capability',
+          specialistRole: 'invalid_role',
+          toolInput: {
+            to: 'daniel@example.com',
+            subject: 'Biz launch',
+            body: '',
+          },
+        }),
+      ],
+    }), { allowedToolIds: ['gmail_send'], requiresExternalAction: true })
+
+    assert.equal(graph.tasks.length, 1)
+    assert.equal(graph.tasks[0].id, 'tool-task-1')
+    assert.deepEqual(graph.tasks[0].dependencies, [])
+    assert.deepEqual(graph.tasks[0].acceptanceCriteria, ['Tool result ready for approval'])
+    assert.equal(graph.tasks[0].requiredCapability, 'tool_execution')
+    assert.equal(graph.tasks[0].specialistRole, 'execution')
+    assert.deepEqual(graph.tasks[0].requiredInputs, [{
+      kind: 'tool_output',
+      description: 'Gmail delivery result.',
+      toolId: 'gmail_send',
+    }])
+    assert.deepEqual(graph.tasks[0].toolInput, {
+      to: 'daniel@example.com',
+      subject: 'Biz launch',
+      body: 'Biz is launching: an AI that never sleeps.',
+    })
+  } finally {
+    unregister()
+  }
+})
 test('task output inputs must reference a declared dependency', () => {
   assert.throws(() => validatePlanGraph({
     tasks: [

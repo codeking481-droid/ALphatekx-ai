@@ -24,7 +24,7 @@ import { audit } from '../observability/audit.js'
 import { log } from '../observability/logger.js'
 import { requestContext } from '../observability/request-context.js'
 import { decideApproval } from '../tools/executor.js'
-import { parseApprovalDescription } from '../tools/registry.js'
+import { getTool, parseApprovalDescription } from '../tools/registry.js'
 import { registerWebSearchTool } from '../tools/web-search.js'
 import { registerFileTools } from '../tools/file-tools.js'
 import { registerSkillCreateTool } from '../skills/skill-create.js'
@@ -589,6 +589,8 @@ app.get('/api/approvals', requireUser, async (req, res, next) => {
       items: rows.map(({ tool_input, ...row }) => ({
         ...row,
         description: parseApprovalDescription(row.description)?.description || 'This approval record is stale and requires review.',
+        tool_name: getTool(row.tool_id)?.name || row.tool_id,
+        connector: getTool(row.tool_id)?.connector || 'unknown',
         ...(row.tool_id === 'file_write' ? { input: parseStoredObject(tool_input) } : {}),
       })),
     })

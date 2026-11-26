@@ -12,6 +12,8 @@ export function registerLinkedInTools() {
   return [
     registerTool({
       id: 'linkedin_post',
+      name: 'Publish LinkedIn Post',
+      connector: 'linkedin',
       description: 'Publish the exact LinkedIn post text only after the user approves it in Approvals.',
       inputSchema: postTextSchema,
       permissions: ['tool:approved'],
@@ -30,6 +32,8 @@ export function registerLinkedInTools() {
     }),
     registerTool({
       id: 'linkedin_read_comments',
+      name: 'Read LinkedIn Comments',
+      connector: 'linkedin',
       description: 'Read comments on one LinkedIn post the connected account can access.',
       inputSchema: {
         type: 'object',
@@ -52,6 +56,8 @@ export function registerLinkedInTools() {
     }),
     registerTool({
       id: 'linkedin_reply',
+      name: 'Reply to LinkedIn Comment',
+      connector: 'linkedin',
       description: 'Reply to a LinkedIn comment; the exact reply requires user approval in Approvals.',
       inputSchema: {
         type: 'object',
@@ -83,6 +89,8 @@ export function registerLinkedInTools() {
     }),
     registerTool({
       id: 'linkedin_search_people',
+      name: 'Search LinkedIn People',
+      connector: 'linkedin',
       description: 'Search LinkedIn people by keywords using the connected account, subject to LinkedIn API access.',
       inputSchema: {
         type: 'object',

@@ -959,7 +959,7 @@ test('approval-required tool tasks pause and do not claim the action happened', 
     assert.equal(database.state.approvals[0].status, 'pending')
     assert.equal(database.state.agentRuns[0].status, 'waiting_approval')
     assert.equal(calls.some(({ stage }) => stage === 'synthesis'), false)
-    assert.match(result.reply, /awaiting approval/i)
+    assert.match(result.reply, /approval was created/i)
   } finally {
     unregister()
   }
@@ -1006,14 +1006,7 @@ test('LinkedIn post requests create an approval with the exact preview before ex
     database,
     registry,
     message: 'Make me a LinkedIn post about launching Biz.',
-    skillResolver: async () => [{
-      name: 'manage-linkedin',
-      description: 'Create and manage LinkedIn posts.',
-      version: '1.0.0',
-      body: 'Prepare LinkedIn posts and submit them for approval before publishing.',
-      tools: ['linkedin_post'],
-      enabled: true,
-    }],
+    skillResolver: async () => [],
   })
 
   assert.equal(result.execution.status, 'awaiting_approval')
@@ -1021,18 +1014,18 @@ test('LinkedIn post requests create an approval with the exact preview before ex
   assert.equal(database.state.toolExecutions[0].toolId, 'linkedin_post')
   assert.equal(database.state.toolExecutions[0].status, 'pending_approval')
   assert.equal(database.state.approvals[0].status, 'pending')
+  assert.ok(database.state.auditEvents.some((event) => event[1] === 'conversation.message.awaiting_approval'))
   assert.match(database.state.approvals[0].description, new RegExp(postText))
-  assert.match(result.reply, /LinkedIn post preview/)
-  assert.match(result.reply, new RegExp(postText))
+  assert.match(result.reply, /Publish LinkedIn Post/)
   assert.match(result.reply, /Approvals/)
 })
 
 test('LinkedIn post plans with malformed acceptance criteria still reach approval', async () => {
   const cases = [
     { name: 'string', value: 'Draft ready', expected: ['Draft ready'] },
-    { name: 'missing', expected: ['Draft LinkedIn post created for approval'] },
-    { name: 'empty', value: [], expected: ['Draft LinkedIn post created for approval'] },
-    { name: 'null', value: null, expected: ['Draft LinkedIn post created for approval'] },
+    { name: 'missing', expected: ['Tool result ready for approval'] },
+    { name: 'empty', value: [], expected: ['Tool result ready for approval'] },
+    { name: 'null', value: null, expected: ['Tool result ready for approval'] },
   ]
 
   for (const scenario of cases) {
@@ -1083,7 +1076,97 @@ test('LinkedIn post plans with malformed acceptance criteria still reach approva
     assert.deepEqual(database.state.agentRuns[0].input.task.acceptanceCriteria, scenario.expected)
     assert.equal(database.state.toolExecutions[0].status, 'pending_approval')
     assert.equal(database.state.approvals[0].status, 'pending')
-    assert.match(result.reply, /LinkedIn post preview/)
+    assert.match(result.reply, /Review the exact preview in \[Approvals\]/)
+  }
+})
+
+test('dependent Gmail tool plans collapse into one generic approval task without a skill', async () => {
+  const toolInput = {
+    to: 'daniel@example.com',
+    subject: 'Biz launch',
+    body: 'Biz is launching: an AI that never sleeps.',
+  }
+  const unregister = registerTool({
+    id: 'gmail_send',
+    name: 'Send Gmail Message',
+    connector: 'gmail',
+    description: 'Send an email after user approval.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        to: { type: 'string', minLength: 1 },
+        subject: { type: 'string', minLength: 1 },
+        body: { type: 'string', minLength: 1 },
+      },
+      required: ['to', 'subject', 'body'],
+      additionalProperties: false,
+    },
+    permissions: ['tool:approved'],
+    requiresApproval: true,
+    validate: (input) => ['to', 'subject', 'body'].every((key) =>
+      typeof input?.[key] === 'string' && input[key].trim().length > 0),
+    describeAction: (input) => `Send email to ${input.to}: ${input.subject}\n\n${input.body}`,
+    execute: async () => ({ sent: true }),
+  })
+  try {
+    const database = createDatabase()
+    const { registry } = createRegistry({
+      handlers: {
+        'mock-primary': {
+          understanding: () => ({
+            text: JSON.stringify(objective({
+              goal: 'Send an email announcing the Biz launch.',
+              deliverables: ['Email sent'],
+              requiresExternalAction: true,
+            })),
+          }),
+          planning: () => ({
+            text: JSON.stringify({
+              tasks: [
+                task('draft-email', {
+                  description: 'Draft the Biz launch email.',
+                  acceptanceCriteria: 'Email is clear and concise.',
+                  toolInput: { body: toolInput.body },
+                }),
+                task('send-email', {
+                  description: 'Send the email after user approval.',
+                  type: 'tool',
+                  requiredInputs: [{
+                    kind: 'tool_output',
+                    description: 'Gmail delivery result.',
+                    toolId: 'gmail_send',
+                  }],
+                  dependencies: ['draft-email'],
+                  acceptanceCriteria: 'Email sent after approval.',
+                  toolInput: { ...toolInput, body: '' },
+                }),
+              ],
+            }),
+          }),
+        },
+      },
+    })
+    const result = await request({
+      database,
+      registry,
+      message: 'Send an email to Daniel about launching Biz.',
+      skillResolver: async () => [],
+    })
+
+    assert.equal(result.execution.status, 'awaiting_approval')
+    assert.equal(result.execution.tasks.length, 1)
+    assert.equal(result.execution.tasks[0].taskId, 'tool-task-1')
+    assert.equal(database.state.toolExecutions.length, 1)
+    assert.equal(database.state.toolExecutions[0].toolId, 'gmail_send')
+    assert.deepEqual(database.state.toolExecutions[0].input, toolInput)
+    assert.equal(database.state.toolExecutions[0].status, 'pending_approval')
+    assert.equal(database.state.approvals[0].status, 'pending')
+    assert.match(database.state.approvals[0].description, /Biz is launching/)
+    assert.match(result.reply, /Send Gmail Message/)
+    assert.match(result.reply, /Review the exact preview in \[Approvals\]/)
+    assert.equal(database.state.agentRuns.length, 1)
+  } finally {
+    unregister()
   }
 })
 
@@ -1338,7 +1421,7 @@ test('external-action requests without a planned tool do not claim completion', 
     assert.equal(calls[0].stage, 'understanding')
     assert.equal(calls[1].stage, 'planning')
     assert.equal(calls.some(({ stage }) => stage === 'synthesis'), false)
-    assert.match(result.reply, /no tool was executed; i did not perform/i)
+    assert.match(result.reply, /No registered tool matched this external action/i)
     assert.doesNotMatch(result.reply, /sent the message/i)
     assert.equal(toolExecutions, 0)
     assert.equal(database.state.toolExecutions.length, 0)

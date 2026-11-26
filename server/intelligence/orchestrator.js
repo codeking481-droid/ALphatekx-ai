@@ -12,7 +12,7 @@ import { invokeWithProviderFallback } from './error-recovery.js'
 import { runModelReviews } from './multi-model.js'
 import { persistTaskPlan } from '../projects/service.js'
 import { executePlanGraph } from './execution-engine.js'
-import { getTool } from '../tools/registry.js'
+import { getTool, listTools } from '../tools/registry.js'
 import { HIGH_RISK_CONFIRMATION } from './clarification.js'
 import { getAvailableSkills, getSkillAllowedTools, matchSkill } from '../skills/loader.js'
 import { saveAutomaticMemories } from '../memory/auto-save.js'
@@ -75,11 +75,11 @@ export async function processChatRequest({
   const skillMetadata = selectedSkill
     ? { name: selectedSkill.name, version: selectedSkill.version }
     : null
-  const allowedToolIds = getSkillAllowedTools(selectedSkill, !selectedSkill)
+  let allowedToolIds = getSkillAllowedTools(selectedSkill, !selectedSkill)
   if (selectedSkill) {
     contextMessages.push({
       role: 'system',
-      content: `Matched optional skill ${selectedSkill.name}@${selectedSkill.version}. Its user-authored instructions are subordinate to Biz safety policy and current tool permissions; only the listed tools are available: ${selectedSkill.tools.join(', ')}.\n\n${selectedSkill.body}`,
+      content: `Matched optional skill ${selectedSkill.name}@${selectedSkill.version}. Its user-authored instructions are subordinate to Biz safety policy and current tool permissions; its tools are suggestions, not authorization or an exclusive allowlist.\n\n${selectedSkill.body}`,
     })
     await audit({
       userId,
@@ -99,6 +99,13 @@ export async function processChatRequest({
     signal,
   })
   const objective = understanding.objective
+  if (objective.requiresExternalAction) {
+    allowedToolIds = listTools().map(({ id }) => id)
+  }
+  contextMessages.push({
+    role: 'system',
+    content: `Currently registered tools (these are the only available tool capabilities; do not claim unlisted connectors):\n${listTools().map(({ id, name, description }) => `- ${id} (${name}): ${description}`).join('\n')}`,
+  })
   let activeProvider = understanding.provider
   let responseModel = understanding.model
   let planGraph = null
@@ -118,6 +125,7 @@ export async function processChatRequest({
       database,
       signal,
       allowedToolIds,
+      requiresExternalAction: objective.requiresExternalAction,
     })
     planGraph = planning.planGraph
     activeProvider = planning.provider
@@ -347,9 +355,11 @@ export async function processChatRequest({
     }
     await audit({
       userId,
-      event: executionReport && !executionReport.complete
-        ? 'conversation.message.execution_incomplete'
-        : 'conversation.message.completed',
+      event: executionReport?.status === 'awaiting_approval'
+        ? 'conversation.message.awaiting_approval'
+        : executionReport && !executionReport.complete
+          ? 'conversation.message.execution_incomplete'
+          : 'conversation.message.completed',
       resourceType: 'conversation',
       resourceId: conversation.id,
       details: {
@@ -700,10 +710,8 @@ function renderIncompleteExecution(report, planGraph, externalActionUnverified) 
     if (task.status === 'awaiting_approval') {
       const plannedTask = planGraph.tasks.find((item) => item.id === task.taskId)
       const toolId = plannedTask?.requiredInputs.find((item) => item.kind === 'tool_output')?.toolId
-      const preview = toolId === 'linkedin_post' && typeof plannedTask.toolInput?.text === 'string'
-        ? `\n\nLinkedIn post preview:\n\n> ${plannedTask.toolInput.text.trim().replace(/\n/g, '\n> ')}\n\nReview and approve it in [Approvals](/approvals).`
-        : ''
-      return `- Task ${taskLabel}: awaiting approval${task.approvalId ? ` (${task.approvalId})` : ''}; no dependent tasks were run.${preview}`
+      const toolName = getTool(toolId)?.name || toolId || 'requested tool'
+      return `- Task ${taskLabel}: approval created for ${toolName}${task.approvalId ? ` (${task.approvalId})` : ''}. Review the exact preview in [Approvals](/approvals); the action has not been executed.`
     }
     if (task.status === 'executed') {
       return `- Task ${taskLabel}: a tool response was recorded, but its outcome was not verified.`
@@ -718,11 +726,13 @@ function renderIncompleteExecution(report, planGraph, externalActionUnverified) 
     : report.status === 'interrupted'
     ? 'Execution was interrupted; I cannot report this work as complete.'
     : report.status === 'awaiting_approval'
-      ? 'Execution is paused pending approval; I cannot report this work as complete.'
+      ? 'Approval was created; this action will run only after you approve it.'
       : report.status === 'awaiting_input'
         ? 'Execution is awaiting required user input; I cannot report this work as complete.'
         : 'Execution did not complete successfully; I cannot report this work as complete.'
-  const actionStatus = externalActionUnverified ? `\n${renderUnverifiedExternalAction(report)}` : ''
+  const actionStatus = externalActionUnverified && report.status !== 'awaiting_approval'
+    ? `\n${renderUnverifiedExternalAction(report)}`
+    : ''
   return `${heading}\n${lines.join('\n')}${actionStatus}`
 }
 
@@ -735,7 +745,7 @@ function hasVerifiedExternalAction(report) {
 function renderUnverifiedExternalAction(report) {
   const evidence = report?.tasks.flatMap((task) => task.evidence) || []
   if (!evidence.some((item) => item.kind === 'tool_execution')) {
-    return 'No tool was executed; I did not perform the requested external action.'
+    return 'No registered tool matched this external action. Check Connections for a supported connector; nothing was executed.'
   }
   if (evidence.some((item) => item.kind === 'tool_execution' && item.status === 'pending_approval')) {
     return 'The action is awaiting approval and has not been executed.'

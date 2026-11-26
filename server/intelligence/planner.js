@@ -11,6 +11,7 @@ export async function createPlanGraph(registry, provider, {
   database,
   signal = null,
   allowedToolIds = null,
+  requiresExternalAction = false,
 }) {
   const request = {
     messages: buildPlanMessages({ message, objective, contextMessages, attachmentContext, allowedToolIds }),
@@ -22,7 +23,7 @@ export async function createPlanGraph(registry, provider, {
   let fallbackUsed = completion.fallbackUsed === true
   let planGraph
   try {
-    planGraph = parsePlanGraph(result.text, { allowedToolIds })
+    planGraph = parsePlanGraph(result.text, { allowedToolIds, requiresExternalAction })
   } catch {
     const repairMessages = [
       request.messages[0],
@@ -32,7 +33,7 @@ export async function createPlanGraph(registry, provider, {
         content: [
           'Regenerate a valid PlanGraph from the original request and ObjectiveSpec because the previous response did not pass validation.',
           'Return only a complete JSON object with a tasks array that follows the PlanGraph instructions exactly.',
-          'Do not invent tools or weaken approval requirements. For linkedin_post, provide the registered tool input with complete non-empty post text.',
+          'Do not invent tools or weaken approval requirements. For an external action, use exactly one matching registered tool and provide complete valid inputs.',
         ].join(' '),
       },
       request.messages.at(-1),
@@ -53,7 +54,7 @@ export async function createPlanGraph(registry, provider, {
     activeProvider = repair.provider
     fallbackUsed ||= repair.fallbackUsed === true
     result = repair.result
-    planGraph = parsePlanGraph(result.text, { allowedToolIds })
+    planGraph = parsePlanGraph(result.text, { allowedToolIds, requiresExternalAction })
   }
   return {
     planGraph,
