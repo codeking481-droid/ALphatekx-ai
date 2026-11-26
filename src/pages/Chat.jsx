@@ -107,6 +107,7 @@ export default function Chat() {
       message.id === messageId
         ? {
             ...message,
+            id: job.result?.assistant_message_id || message.id,
             content: response,
             skill: job.result?.skill || null,
             memoriesUsed: job.result?.memoriesUsed || [],
@@ -127,7 +128,7 @@ export default function Chat() {
   };
 
   const handleSend = useCallback(
-    async (text, attachments) => {
+    async (text, attachments, clarificationAnswers = []) => {
       if (sending) return false;
       if (isUiPreview()) {
         setError("This UI preview is offline. Connect the local API to send messages.");
@@ -149,6 +150,7 @@ export default function Chat() {
           message: text,
           timezone: userTimezone(),
           attachments: attachments.map((file) => ({ name: file.name, url: file.url })),
+          ...(clarificationAnswers.length ? { clarification_answers: clarificationAnswers } : {}),
         });
         submittedJobId = data.job_id;
         setActiveJobId(submittedJobId);
@@ -313,7 +315,13 @@ export default function Chat() {
                 </div>
               )}
               {clarificationQuestions.length > 0 && !sending && (
-                <QuestionCard key={latestAssistant.id} questions={clarificationQuestions} onAnswer={(answer) => handleSend(answer, [])} />
+                <QuestionCard
+                  key={latestAssistant.id}
+                  messageId={latestAssistant.id}
+                  questions={clarificationQuestions}
+                  onAnswer={({ message, clarification_answers: clarificationAnswers }) =>
+                    handleSend(message, [], clarificationAnswers)}
+                />
               )}
               {error && (
                 <div className="mb-2.5 rounded-xl border border-destructive/25 bg-destructive/[0.06] px-3 py-2 text-[12.5px] text-destructive">

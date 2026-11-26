@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { decideApproval, executeTool } from './executor.js'
 import { registerTool } from './registry.js'
+import { registerLinkedInTools } from '../linkedin/tools.js'
 
 function createTool(id) {
   return registerTool({
@@ -169,6 +170,47 @@ test('agent permissions are checked before tool execution is recorded', async ()
     assert.equal(insertedExecution, false)
   } finally {
     unregister()
+  }
+})
+
+test('LinkedIn posts still require a fresh approval even when a permission grant exists', async () => {
+  const unregister = registerLinkedInTools()
+  let approvalCreated = false
+  const database = {
+    async connect() {
+      return {
+        async query(sql) {
+          if (['BEGIN', 'COMMIT', 'ROLLBACK'].includes(sql)) return { rowCount: 0, rows: [] }
+          if (sql.includes('FROM agent_runs')) {
+            return { rowCount: 1, rows: [{ status: 'running', permissions: ['tool:approved'] }] }
+          }
+          if (sql.includes('FROM tool_permission_grants')) return { rowCount: 1, rows: [{}] }
+          if (sql.includes('SELECT id, status FROM tool_executions')) return { rowCount: 0, rows: [] }
+          if (sql.includes('INSERT INTO tool_executions')) return { rowCount: 1, rows: [{ id: 'execution-1' }] }
+          if (sql.includes('INSERT INTO approval_requests')) {
+            approvalCreated = true
+            return { rowCount: 1, rows: [{ id: 'approval-1' }] }
+          }
+          if (sql.includes('INSERT INTO audit_logs')) return { rowCount: 1, rows: [] }
+          assert.fail(`Unexpected query: ${sql}`)
+        },
+        release() {},
+      }
+    },
+  }
+
+  try {
+    const execution = await executeTool({
+      toolId: 'linkedin_post',
+      userId: 'user-1',
+      agentRunId: 'run-1',
+      input: { text: 'A draft that must be approved.' },
+      database,
+    })
+    assert.equal(execution.status, 'pending_approval')
+    assert.equal(approvalCreated, true)
+  } finally {
+    unregister.forEach((remove) => remove())
   }
 })
 

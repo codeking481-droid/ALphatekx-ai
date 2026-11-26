@@ -49,6 +49,24 @@ test('skill matching chooses the strongest enabled description match and ignores
   assert.equal(matchSkill('Sell SkinSnap to UK companies', skills.map((skill) => ({ ...skill, enabled: false }))), null)
 })
 
+test('active LinkedIn skill stays selected for date and schedule follow-ups', () => {
+  const skills = [
+    { name: 'manage-linkedin', description: 'Manage LinkedIn posts and schedules.', enabled: true },
+    { name: 'motion-graphics', description: 'Create motion graphics and animated text.', enabled: true },
+  ]
+  const activeSkill = { name: 'manage-linkedin', version: '1.0.0' }
+
+  for (const message of [
+    'Fix dates to Fri Nov 27 through Thu Dec 3, same 7 texts.',
+    'Start tomorrow, not today; 10am already passed.',
+  ]) {
+    assert.equal(
+      matchSkill(message, skills, { activeSkill, preserveActiveSkill: true })?.name,
+      'manage-linkedin',
+    )
+  }
+})
+
 test('skill matching uses keywords and intent to choose the right birthday-card skill', () => {
   const skills = [
     {

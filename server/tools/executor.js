@@ -56,7 +56,8 @@ export async function executeTool({
     if (!tool.permissions.every((permission) => grantedPermissions.includes(permission))) {
       throw Object.assign(new Error('Agent is not authorized to execute this tool.'), { status: 403 })
     }
-    if (approvalRequired && await hasToolPermissionGrant({ userId, tool, database: client })) {
+    if (approvalRequired && tool.id !== 'linkedin_post' &&
+      await hasToolPermissionGrant({ userId, tool, database: client })) {
       approvalRequired = false
     }
     const duplicate = await client.query(
@@ -489,6 +490,75 @@ export async function decideApproval({
       database,
     })
     throw error
+  }
+}
+
+export async function supersedePendingApproval({ userId, approvalId, database = pool, requestId = null }) {
+  const client = await database.connect()
+  try {
+    await client.query('BEGIN')
+    const { rows } = await client.query(
+      `SELECT a.id, a.status, a.expires_at, e.id AS execution_id, e.agent_run_id
+       FROM approval_requests a
+       JOIN tool_executions e ON e.id = a.tool_execution_id
+       WHERE a.id = $1 AND a.user_id = $2 AND e.tool_id = 'linkedin_post'
+       FOR UPDATE OF a, e`,
+      [approvalId, userId],
+    )
+    const approval = rows[0]
+    if (!approval || approval.status !== 'pending' || new Date(approval.expires_at) <= new Date()) {
+      throw Object.assign(new Error('The previous LinkedIn approval is no longer pending; no replacement was created.'), {
+        status: 409,
+      })
+    }
+    await client.query(
+      `UPDATE approval_requests SET status = 'denied', decided_at = now()
+       WHERE id = $1 AND user_id = $2 AND status = 'pending'`,
+      [approvalId, userId],
+    )
+    await client.query(
+      `UPDATE tool_executions SET status = 'cancelled', completed_at = now()
+       WHERE id = $1 AND status = 'pending_approval'`,
+      [approval.execution_id],
+    )
+    await client.query(
+      `UPDATE agent_runs SET status = 'cancelled',
+           result = '{"status":"cancelled","reason":"superseded_by_schedule_update"}'::jsonb,
+           completed_at = now()
+       WHERE id = $1 AND status = 'waiting_approval'`,
+      [approval.agent_run_id],
+    )
+    await client.query(
+      `UPDATE jobs SET status = 'cancelled',
+           progress = '{"stage":"cancelled","message":"Superseded by a corrected LinkedIn schedule."}'::jsonb,
+           completed_at = now(), updated_at = now()
+       WHERE approval_id = $1 AND status = 'waiting_approval'`,
+      [approvalId],
+    )
+    await audit({
+      userId,
+      event: 'tool.approval.superseded',
+      resourceType: 'approval_request',
+      resourceId: approvalId,
+      details: {
+        request_id: requestId,
+        execution_id: approval.execution_id,
+        reason: 'corrected_linkedin_schedule',
+      },
+    }, client)
+    await client.query('COMMIT')
+    log('info', 'tool.approval.superseded', {
+      requestId,
+      userId,
+      approvalId,
+      executionId: approval.execution_id,
+    })
+    return { status: 'superseded', approvalId }
+  } catch (error) {
+    await client.query('ROLLBACK')
+    throw error
+  } finally {
+    client.release()
   }
 }
 

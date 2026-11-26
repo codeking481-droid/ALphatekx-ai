@@ -110,6 +110,7 @@ export function createJobWorker({
             message: input.message,
             timezone: input.timezone || 'UTC',
             attachments: input.attachments || [],
+            clarificationAnswers: input.clarification_answers || [],
             database,
             registry: userRegistry,
             signal: controller.signal,

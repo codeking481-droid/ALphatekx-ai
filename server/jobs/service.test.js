@@ -2,8 +2,14 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { claimNextJob, getOwnedJob, submitChatJob } from './service.js'
 
-test('chat submission persists the input in a queued job', async () => {
+test('chat submission persists the input and structured clarification answers in a queued job', async () => {
   let inserted
+  const clarificationAnswers = [{
+    question_id: 'assistant-1:q1',
+    question_text: 'Same text or different versions?',
+    option_clicked: 'Use same text 7 times',
+    answer_text: 'Use same text 7 times',
+  }]
   const database = {
     async query(sql, params) {
       assert.match(sql, /INSERT INTO jobs/)
@@ -16,12 +22,14 @@ test('chat submission persists the input in a queued job', async () => {
     userId: 'user-1',
     message: 'Search current weather',
     attachments: [],
+    clarificationAnswers,
     database,
   })
 
   assert.equal(job.id, 'job-1')
   assert.equal(inserted.message, 'Search current weather')
   assert.equal(inserted.conversation_id, null)
+  assert.deepEqual(inserted.clarification_answers, clarificationAnswers)
 })
 
 test('job claims use row locks and recover only expired leases', async () => {

@@ -12,9 +12,10 @@ export function parseScheduleIntent(message, {
   const durationDays = parseDurationDays(text)
   const requestedCount = Number(/\b(\d+) posts?\s*(?:total|this week|per week)\b/.exec(text)?.[1]) || null
   const dailyCadence = /\b(every day|daily)\b/.test(text)
+  const explicitDateRange = parseExplicitDateRange(message, now, zone)
   const recurring = dailyCadence ||
     /\b(every week|weekly|recurring|next week|for one week|for a week|for \d+ days?)\b/i.test(text) ||
-    Boolean(requestedCount)
+    Boolean(requestedCount || explicitDateRange?.count)
 
   if (recurring) {
     if (durationDays && !dailyCadence && !requestedCount) {
@@ -24,7 +25,7 @@ export function parseScheduleIntent(message, {
         clarificationQuestion: 'How many posts per week, and what time each day? Example: 1 per day at 9am, or 3 posts total?',
       }
     }
-    const count = requestedCount || (dailyCadence ? durationDays || 0 : null)
+    const count = requestedCount || (dailyCadence ? durationDays || explicitDateRange?.count || 0 : explicitDateRange?.count || null)
     if (!count) {
       return {
         mode: 'recurring',
@@ -33,7 +34,7 @@ export function parseScheduleIntent(message, {
       }
     }
     if (count === 1) {
-      const time = parseClockTime(text)
+      const time = parseClockTime(latestMessage) || parseClockTime(text)
       if (!time) {
         return {
           mode: 'scheduled',
@@ -51,7 +52,7 @@ export function parseScheduleIntent(message, {
     const intervalMinutes = durationDays && requestedCount && !dailyCadence
       ? Math.max(1, Math.round((durationDays - 1) / (requestedCount - 1))) * 1440
       : 1440
-    const time = parseClockTime(text)
+    const time = parseClockTime(latestMessage) || parseClockTime(text)
     if (!time) {
       return {
         mode: 'recurring',
@@ -61,7 +62,7 @@ export function parseScheduleIntent(message, {
         clarificationQuestion: 'What time should I schedule each post?',
       }
     }
-    if (!/\b(same text|reuse (?:the )?same|repeat (?:the )?same|different versions|different posts|unique posts)\b/i.test(text)) {
+    if (!/\b(same text(?:\s+\d+\s+times?)?|reuse (?:the )?same|repeat (?:the )?same|different versions|different posts|unique posts)\b/i.test(text)) {
       return {
         mode: 'recurring',
         count,
@@ -72,7 +73,11 @@ export function parseScheduleIntent(message, {
       }
     }
     const timeParts = time.split(':').map(Number)
-    const scheduledAt = nextOccurrenceAtLocalTime(now, timeParts[0], timeParts[1], zone)
+    const scheduledAt = explicitDateRange?.start
+      ? dateAtLocalTime(explicitDateRange.start, timeParts[0], timeParts[1], zone, now)
+      : /\b(?:start|starting|begin|from)\s+tomorrow\b/i.test(latestMessage || '')
+        ? nextDayAtLocalTime(now, timeParts[0], timeParts[1], zone)
+      : nextOccurrenceAtLocalTime(now, timeParts[0], timeParts[1], zone)
     return {
       mode: 'recurring',
       count,
@@ -80,7 +85,7 @@ export function parseScheduleIntent(message, {
       time,
       timezone: zone,
       scheduledAt,
-      sameText: !/\b(different versions|different posts|unique posts)\b/i.test(text),
+      sameText: getLastTextReuseChoice(text) !== 'different',
     }
   }
 
@@ -135,6 +140,57 @@ function parseDurationDays(text) {
   return null
 }
 
+function parseExplicitDateRange(text, now, timezone) {
+  const matches = [...String(text || '').matchAll(
+    /\b(?:mon(?:day)?|tue(?:sday)?|wed(?:nesday)?|thu(?:rsday)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?\s+)?(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+(\d{1,2})(?:,?\s+(20\d{2}))?\b/gi,
+  )]
+  if (!matches.length) return null
+  const monthNumbers = new Map([
+    ['jan', 1], ['feb', 2], ['mar', 3], ['apr', 4], ['may', 5], ['jun', 6],
+    ['jul', 7], ['aug', 8], ['sep', 9], ['oct', 10], ['nov', 11], ['dec', 12],
+  ])
+  const current = zonedParts(now, timezone)
+  const parseDate = (match, reference = null) => {
+    const month = monthNumbers.get(match[1].slice(0, 3).toLowerCase())
+    const day = Number(match[2])
+    let year = Number(match[3]) || reference?.year || current.year
+    if (!match[3] && !reference && (month < current.month || (month === current.month && day < current.day))) {
+      year += 1
+    }
+    if (!match[3] && reference && month < reference.month) year += 1
+    const date = new Date(Date.UTC(year, month - 1, day))
+    if (date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) return null
+    return { year, month, day }
+  }
+  const start = parseDate(matches[0])
+  if (!start) return null
+  const end = matches.length > 1 ? parseDate(matches[matches.length - 1], start) : null
+  let count = null
+  if (end) {
+    const firstDay = Date.UTC(start.year, start.month - 1, start.day)
+    const lastDay = Date.UTC(end.year, end.month - 1, end.day)
+    const days = Math.round((lastDay - firstDay) / 86_400_000) + 1
+    if (days > 0 && days <= 30) count = days
+  }
+  return { start, count }
+}
+
+function dateAtLocalTime(date, hour, minute, timezone, now) {
+  let target = localTimeToUtc({ ...date, hour, minute }, timezone)
+  const current = zonedParts(now, timezone)
+  if (date.year === current.year && date.month === current.month && date.day === current.day && target <= now) {
+    const nextDay = new Date(Date.UTC(date.year, date.month - 1, date.day + 1))
+    target = localTimeToUtc({
+      year: nextDay.getUTCFullYear(),
+      month: nextDay.getUTCMonth() + 1,
+      day: nextDay.getUTCDate(),
+      hour,
+      minute,
+    }, timezone)
+  }
+  return target.toISOString()
+}
+
 function parseClockTime(text) {
   const match = /\b(?:at )?(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b/i.exec(text)
   if (!match) return null
@@ -142,6 +198,14 @@ function parseClockTime(text) {
   if (match[3].toLowerCase() === 'pm') hour += 12
   const minute = Number(match[2] || 0)
   return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`
+}
+
+function getLastTextReuseChoice(text) {
+  const sameTextMatches = [...text.matchAll(/\b(?:same text(?:\s+\d+\s+times?)?|reuse (?:the )?same|repeat (?:the )?same)\b/gi)]
+  const differentTextMatches = [...text.matchAll(/\b(?:different versions|different posts|unique posts)\b/gi)]
+  const lastSame = sameTextMatches.at(-1)?.index ?? -1
+  const lastDifferent = differentTextMatches.at(-1)?.index ?? -1
+  return lastDifferent > lastSame ? 'different' : 'same'
 }
 
 function parseOneTime(text, timezone, now) {
@@ -195,6 +259,18 @@ function nextOccurrenceAtLocalTime(now, hour, minute, timezone) {
     }, timezone)
   }
   return scheduled.toISOString()
+}
+
+function nextDayAtLocalTime(now, hour, minute, timezone) {
+  const current = zonedParts(now, timezone)
+  const next = new Date(Date.UTC(current.year, current.month - 1, current.day + 1))
+  return localTimeToUtc({
+    year: next.getUTCFullYear(),
+    month: next.getUTCMonth() + 1,
+    day: next.getUTCDate(),
+    hour,
+    minute,
+  }, timezone).toISOString()
 }
 
 function zonedParts(date, timezone) {

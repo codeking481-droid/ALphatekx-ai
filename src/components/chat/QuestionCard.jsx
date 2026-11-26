@@ -16,18 +16,25 @@ export function getClarificationQuestions(content) {
 }
 
 function choicesFor(question) {
+  const recurringMatch = /\bsame text\s+(\d+)\s+times?\b[\s\S]*?\bmake\s+(\d+)\s+different versions?\b/i.exec(question);
+  if (recurringMatch) {
+    return [
+      `Use same text ${recurringMatch[1]} times`,
+      `Make ${recurringMatch[2]} different versions`,
+      "Use a sensible default",
+    ];
+  }
   const optionText = question.match(/:\s*(.+?)(?:\?|$)/)?.[1];
   const choices = optionText
     ? optionText.split(/\s*,\s*|\s+or\s+/i).map((choice) => choice.replace(/^["'“”‘’]|["'“”‘’]$/g, "").trim()).filter(Boolean)
     : [];
   if (choices.length >= 2) {
-    const fallbacks = ["Use a sensible default", "Not sure"];
-    return [...choices.slice(0, 4), ...fallbacks].slice(0, 4);
+    return [...choices.slice(0, 3), "Use a sensible default"].slice(0, 4);
   }
-  return ["Use a sensible default", "Keep it simple", "Surprise me", "I’ll provide details"];
+  return ["Use a sensible default", "Keep it simple", "Surprise me"];
 }
 
-export default function QuestionCard({ questions, onAnswer }) {
+export default function QuestionCard({ questions, messageId, onAnswer }) {
   const [questionIndex, setQuestionIndex] = useState(0);
   const [selected, setSelected] = useState([]);
   const [other, setOther] = useState("");
@@ -37,18 +44,30 @@ export default function QuestionCard({ questions, onAnswer }) {
 
   const multiChoice = /\b(select all|choose any|any of the following)\b/i.test(question);
   const options = choicesFor(question);
-  const finishAnswer = (answer) => {
+  const finishAnswer = (answer, optionClicked = answer) => {
+    const recordedAnswer = {
+      question_id: `${messageId}:q${questionIndex + 1}`,
+      question_text: question,
+      option_clicked: optionClicked,
+      answer_text: answer,
+    };
     if (questionIndex + 1 < questions.length) {
-      setAnswers((current) => [...current, answer]);
+      setAnswers((current) => [...current, recordedAnswer]);
       setQuestionIndex((index) => index + 1);
       setSelected([]);
       setOther("");
       return;
     }
-    onAnswer([...answers, answer].map((value, index) => `${index + 1}. ${questions[index]}: ${value}`).join("\n"));
+    const completedAnswers = [...answers, recordedAnswer];
+    onAnswer({
+      message: completedAnswers
+        .map((item, index) => `${index + 1}. ${item.question_text}: ${item.answer_text}`)
+        .join("\n"),
+      clarification_answers: completedAnswers,
+    });
   };
   const submitOther = () => {
-    if (other.trim()) finishAnswer(other.trim());
+    if (other.trim()) finishAnswer(other.trim(), "Something else");
   };
 
   return (
@@ -71,7 +90,7 @@ export default function QuestionCard({ questions, onAnswer }) {
                 if (multiChoice) {
                   setSelected((current) => checked ? current.filter((item) => item !== option) : [...current, option]);
                 } else {
-                  finishAnswer(option);
+                  finishAnswer(option, option);
                 }
               }}
               className={`flex min-h-10 items-center gap-2 rounded-xl border px-3 py-2 text-left text-xs transition-colors ${checked ? "border-primary bg-primary/10 text-foreground" : "border-border/70 bg-background hover:bg-accent"}`}

@@ -16,7 +16,12 @@ test('job worker runs chat outside the HTTP submitter and passes a durable lease
       return {
         id: 'job-1',
         user_id: 'user-1',
-        input: { message: 'Search for current AI news', conversation_id: null, attachments: [] },
+        input: {
+          message: 'Search for current AI news',
+          conversation_id: null,
+          attachments: [],
+          clarification_answers: [{ question_id: 'q1', answer_text: 'Use same text 7 times' }],
+        },
       }
     },
     heartbeat: async () => ({ cancelRequested: false }),
@@ -25,6 +30,7 @@ test('job worker runs chat outside the HTTP submitter and passes a durable lease
       calls.push(request.jobId)
       assert.equal(request.workerId, 'worker-1')
       assert.equal(request.message, 'Search for current AI news')
+      assert.deepEqual(request.clarificationAnswers, [{ question_id: 'q1', answer_text: 'Use same text 7 times' }])
       assert.equal(request.signal.aborted, false)
     },
   })

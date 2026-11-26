@@ -509,6 +509,24 @@ app.post('/api/chat', requireUser, chatRateLimit, requireObjectBody, async (req,
     const attachments = Array.isArray(req.body.attachments)
       ? req.body.attachments.slice(0, 5).filter((file) => file && typeof file.name === 'string' && typeof file.url === 'string')
       : []
+    let clarificationAnswers = []
+    if (req.body.clarification_answers !== undefined) {
+      const answers = req.body.clarification_answers
+      if (!Array.isArray(answers) || answers.length > 4 || answers.some((answer) =>
+        !answer || typeof answer !== 'object' || Array.isArray(answer) ||
+        typeof answer.question_id !== 'string' || answer.question_id.length > 200 ||
+        typeof answer.question_text !== 'string' || answer.question_text.length > 1000 ||
+        typeof answer.option_clicked !== 'string' || answer.option_clicked.length > 200 ||
+        typeof answer.answer_text !== 'string' || answer.answer_text.length > 2000)) {
+        return res.status(400).json({ error: 'Clarification answers are invalid.' })
+      }
+      clarificationAnswers = answers.map((answer) => ({
+        question_id: answer.question_id,
+        question_text: answer.question_text,
+        option_clicked: answer.option_clicked,
+        answer_text: answer.answer_text,
+      }))
+    }
     if (!message && !attachments.length) return res.status(400).json({ error: 'A message or attachment is required.' })
     const job = await submitChatJob({
       userId: req.user.id,
@@ -516,6 +534,7 @@ app.post('/api/chat', requireUser, chatRateLimit, requireObjectBody, async (req,
       projectId,
       message,
       attachments,
+      clarificationAnswers,
       requestId: req.requestId,
       timezone,
     })

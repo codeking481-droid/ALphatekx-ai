@@ -54,6 +54,7 @@ export async function getMessages({ userId, conversationId, limit = 200, databas
     content: row.content,
     ...(Object.hasOwn(row.metadata || {}, 'skill') ? { skill: row.metadata.skill } : {}),
     ...(Array.isArray(row.metadata?.memoriesUsed) ? { memoriesUsed: row.metadata.memoriesUsed } : {}),
+    ...(Array.isArray(row.metadata?.clarificationAnswers) ? { clarificationAnswers: row.metadata.clarificationAnswers } : {}),
     attachments: row.metadata?.attachments || [],
     created_date: row.created_at,
   }))

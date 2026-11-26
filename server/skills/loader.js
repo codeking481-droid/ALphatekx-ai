@@ -275,9 +275,25 @@ export function parseFrontmatter(source) {
   return result
 }
 
-export function matchSkill(message, skills) {
+export function matchSkill(message, skills, {
+  history = [],
+  activeSkill = null,
+  preserveActiveSkill = false,
+} = {}) {
+  if (preserveActiveSkill && activeSkill) {
+    const activeName = typeof activeSkill === 'string' ? activeSkill : activeSkill.name
+    const active = skills.find((skill) => skill.enabled && skill.name === activeName)
+    if (active) return active
+  }
   const requestTokens = new Set([...tokenize(message)].filter((token) => !MATCH_STOP_WORDS.has(token)))
   if (!requestTokens.size) return null
+  const contextTokens = new Set(history
+    .filter((item) => item?.role === 'user' || item?.role === 'assistant')
+    .map((item) => item.content || '')
+    .join(' ')
+    .split(/\s+/)
+    .flatMap((word) => [...tokenize(word)])
+    .filter((token) => !MATCH_STOP_WORDS.has(token)))
   let best = null
   let bestScore = 0
   const requestIntent = inferIntent(message)
@@ -298,6 +314,9 @@ export function matchSkill(message, skills) {
           score += weight * (token.length >= 7 ? 1.2 : 1)
           matchedTokens.add(token)
         }
+      }
+      for (const token of contextTokens) {
+        if (fieldTokens.has(token) && !requestTokens.has(token)) score += weight * 0.1
       }
     }
     if (requestIntent && requestIntent === inferIntent(`${skill.name} ${skill.description} ${(skill.keywords || []).join(' ')} ${skill.body || ''}`)) {

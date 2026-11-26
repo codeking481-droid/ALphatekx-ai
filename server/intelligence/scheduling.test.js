@@ -64,3 +64,45 @@ test('daily scheduled posts preserve local clock time across daylight-saving cha
     '2026-03-09T16:00:00.000Z',
   ])
 })
+
+test('daily series accepts an explicit inclusive date range and real local dates', () => {
+  const intent = parseScheduleIntent(
+    'Post to LinkedIn every day for one week at 10am, same text 7 times, Fri Nov 27 through Thu Dec 3',
+    {
+      timezone: 'America/Chicago',
+      now: new Date('2026-11-26T20:00:00.000Z'),
+    },
+  )
+
+  assert.equal(intent.mode, 'recurring')
+  assert.equal(intent.count, 7)
+  assert.equal(intent.scheduledAt, '2026-11-27T16:00:00.000Z')
+  assert.equal(intent.timezone, 'America/Chicago')
+})
+
+test('daily series honors an explicit tomorrow start even before today posting time', () => {
+  const intent = parseScheduleIntent(
+    'Post to LinkedIn every day at 10am for one week using the same text 7 times. Start tomorrow, not today.',
+    {
+      timezone: 'America/Chicago',
+      now: new Date('2026-11-26T14:00:00.000Z'),
+      latestMessage: 'Start tomorrow, not today.',
+    },
+  )
+
+  assert.equal(intent.scheduledAt, '2026-11-27T16:00:00.000Z')
+})
+
+test('a follow-up time change takes precedence over the original posting time', () => {
+  const intent = parseScheduleIntent(
+    'Post to LinkedIn every day at 9am for one week, same text 7 times. Fix the schedule to start tomorrow at 11am.',
+    {
+      timezone: 'America/Chicago',
+      now: new Date('2026-11-26T14:00:00.000Z'),
+      latestMessage: 'Fix the schedule to start tomorrow at 11am.',
+    },
+  )
+
+  assert.equal(intent.time, '11:00')
+  assert.equal(intent.scheduledAt, '2026-11-27T17:00:00.000Z')
+})

@@ -85,7 +85,7 @@ function businessGraph() {
   }
 }
 
-function createDatabase({ history = [], memories = [] } = {}) {
+function createDatabase({ history = [], memories = [], pendingApprovalContext = null } = {}) {
   const state = {
     agentRuns: [],
     agentDefinitions: new Map(),
@@ -97,6 +97,7 @@ function createDatabase({ history = [], memories = [] } = {}) {
     persistedTasks: [],
     toolExecutions: [],
     approvals: [],
+    pendingApprovalContext,
     trace: [],
   }
   let nextRunId = 1
@@ -108,7 +109,12 @@ function createDatabase({ history = [], memories = [] } = {}) {
       return { rowCount: 1, rows: [{ project_id: PROJECT_ID }] }
     }
     if (sql.includes('FROM projects')) return { rowCount: 1, rows: [{ id: PROJECT_ID }] }
-    if (sql.includes('FROM messages m')) return { rows: history.slice(-24).reverse() }
+    if (sql.includes('FROM messages m')) {
+      return { rows: [...history, ...state.persistedMessages].slice(-24).reverse() }
+    }
+    if (sql.includes('FROM jobs j')) {
+      return { rows: pendingApprovalContext ? [pendingApprovalContext] : [] }
+    }
     if (sql.includes('FROM memory_records')) return { rows: memories }
     if (sql.includes('FROM user_skills')) return { rows: [] }
     if (sql.includes('INSERT INTO audit_logs')) {
@@ -190,6 +196,22 @@ function createDatabase({ history = [], memories = [] } = {}) {
           state.approvals.push(...pending.approvals)
           return { rowCount: 0, rows: [] }
         }
+        if (sql.includes('SELECT a.id, a.status, a.expires_at')) {
+          const approval = state.approvals.find(({ id }) => id === values[0])
+          const execution = approval && state.toolExecutions.find(({ id }) => id === approval.toolExecutionId)
+          return approval && execution
+            ? {
+                rowCount: 1,
+                rows: [{
+                  id: approval.id,
+                  status: approval.status,
+                  expires_at: new Date(Date.now() + 60_000),
+                  execution_id: execution.id,
+                  agent_run_id: execution.agentRunId,
+                }],
+              }
+            : { rowCount: 0, rows: [] }
+        }
         if (sql.includes('SELECT id, title, message_count, project_id FROM conversations')) {
           return {
             rowCount: 1,
@@ -249,11 +271,23 @@ function createDatabase({ history = [], memories = [] } = {}) {
           pending.approvals.push({ id, toolExecutionId: values[1], status: 'pending', description: values[2] })
           return { rowCount: 1, rows: [{ id }] }
         }
+        if (sql.includes("UPDATE approval_requests SET status = 'denied'")) {
+          const approval = state.approvals.find(({ id }) => id === values[0])
+          if (!approval) return { rowCount: 0, rows: [] }
+          approval.status = 'denied'
+          return { rowCount: 1, rows: [] }
+        }
         if (sql.includes('UPDATE approval_requests')) {
           const approval = state.approvals.find(({ id }) => id === values[0]) ||
             pending.approvals.find(({ id }) => id === values[0])
           if (!approval) return { rowCount: 0, rows: [] }
           approval.status = values[1]
+          return { rowCount: 1, rows: [] }
+        }
+        if (sql.includes("UPDATE tool_executions SET status = 'cancelled'")) {
+          const execution = state.toolExecutions.find(({ id }) => id === values[0])
+          if (!execution) return { rowCount: 0, rows: [] }
+          execution.status = 'cancelled'
           return { rowCount: 1, rows: [] }
         }
         if (sql.includes('UPDATE tool_executions SET status') && !sql.includes('started_at') && !sql.includes('result =') && !sql.includes('error =')) {
@@ -264,13 +298,22 @@ function createDatabase({ history = [], memories = [] } = {}) {
           return { rowCount: 1, rows: [] }
         }
         if (sql.includes("INSERT INTO messages") && sql.includes("'user'")) {
-          pending.messages.push({ role: 'user', content: values[2] })
-          return { rowCount: 1, rows: [{ id: `message-${nextMessageId++}` }] }
+          const id = `message-${nextMessageId++}`
+          pending.messages.push({ id, role: 'user', content: values[2], metadata: JSON.parse(values[3]) })
+          return { rowCount: 1, rows: [{ id }] }
         }
         if (sql.includes("INSERT INTO messages") && sql.includes("'assistant'")) {
-          pending.messages.push({ role: 'assistant', content: values[2], metadata: JSON.parse(values[3]) })
+          const id = `message-${nextMessageId++}`
+          pending.messages.push({ id, role: 'assistant', content: values[2], metadata: JSON.parse(values[3]) })
+          return { rowCount: 1, rows: [{ id }] }
+        }
+        if (sql.includes("UPDATE agent_runs SET status = 'cancelled'")) {
+          const run = state.agentRuns.find(({ id }) => id === values[0])
+          if (!run || run.status !== 'waiting_approval') return { rowCount: 0, rows: [] }
+          run.status = 'cancelled'
           return { rowCount: 1, rows: [] }
         }
+        if (sql.includes('UPDATE jobs SET status = \'cancelled\'')) return { rowCount: 1, rows: [] }
         if (sql.includes('UPDATE attachments')) return { rowCount: 1, rows: [] }
         if (sql.includes('UPDATE conversations SET last_message')) return { rowCount: 1, rows: [] }
         if (sql.includes('INSERT INTO tasks')) {
@@ -310,6 +353,8 @@ function createRegistry({ ids = ['mock-primary', 'mock-reviewer'], handlers = {}
         ? 'understanding'
         : system.startsWith('Create a PlanGraph')
           ? 'planning'
+          : system.startsWith('Repair the malformed specialist response')
+            ? 'task_repair'
           : system.startsWith('Independently verify one completed specialist task')
             ? 'task_verification'
           : system.startsWith('You are the Research and Reasoning specialist')
@@ -440,6 +485,9 @@ async function request({
   message,
   conversationId = CONVERSATION_ID,
   projectId = PROJECT_ID,
+  clarificationAnswers = [],
+  now = new Date(),
+  timezone = 'UTC',
   signal = null,
   skillResolver,
 }) {
@@ -452,6 +500,9 @@ async function request({
       conversationId,
       projectId,
       message,
+      clarificationAnswers,
+      now,
+      timezone,
       database,
       registry,
       signal,
@@ -652,6 +703,126 @@ test('a matched skill is loaded before planning and available tools remain appro
   assert.deepEqual(result.skill, { name: 'example-sell-skinsnap', version: '1.0.0' })
   assert.deepEqual(database.state.persistedMessages[1].metadata.skill, result.skill)
   assert.ok(database.state.auditEvents.some(([userId, event]) => userId === USER_ID && event === 'skill.used'))
+})
+
+test('a clicked clarification option is persisted and acknowledged in the next reply', async () => {
+  const database = createDatabase()
+  const answer = {
+    question_id: 'assistant-question:q1',
+    question_text: 'Should I use the same text 7 times, or make 7 different versions?',
+    option_clicked: 'Make 7 different versions',
+    answer_text: 'Make 7 different versions',
+  }
+  const { registry } = createRegistry()
+
+  const result = await request({
+    database,
+    registry,
+    message: `1. ${answer.question_text}: ${answer.answer_text}`,
+    clarificationAnswers: [answer],
+    skillResolver: async () => [],
+  })
+
+  assert.match(result.reply, /You chose "Make 7 different versions"/)
+  assert.match(result.reply, /prepared 7 different post versions/i)
+  assert.deepEqual(database.state.persistedMessages[0].metadata.clarificationAnswers, [answer])
+})
+
+test('answering the recurring-text card continues to approval without repeating its question', async () => {
+  const postText = 'SkinSnap helps businesses find customers.'
+  const skills = [{
+    name: 'manage-linkedin',
+    description: 'Manage LinkedIn posts and schedules.',
+    version: '1.0.0',
+    body: 'Prepare LinkedIn drafts and require approval before scheduling.',
+    tools: ['linkedin_post'],
+    enabled: true,
+  }]
+  const firstDatabase = createDatabase()
+  const first = await request({
+    database: firstDatabase,
+    registry: createRegistry().registry,
+    message: `Post this to LinkedIn for one week, every day at 10am: ${postText}`,
+    now: new Date('2026-11-26T20:00:00.000Z'),
+    timezone: 'America/Chicago',
+    skillResolver: async () => skills,
+  })
+  const question = 'Should I use the same text 7 times, or make 7 different versions?'
+  assert.equal(first.reply, `Before I proceed, please clarify:\n- ${question}`)
+  const answer = {
+    question_id: `${first.assistant_message_id}:q1`,
+    question_text: question,
+    option_clicked: 'Use a sensible default',
+    answer_text: 'Use a sensible default',
+  }
+  const database = createDatabase({ history: firstDatabase.state.persistedMessages })
+  const { registry } = createRegistry({
+    handlers: {
+      'mock-primary': {
+        planning: () => ({ text: JSON.stringify(linkedInPostGraph('Planner rewrite')) }),
+      },
+    },
+  })
+
+  const result = await request({
+    database,
+    registry,
+    message: `1. ${question}: Use a sensible default`,
+    clarificationAnswers: [answer],
+    now: new Date('2026-11-26T20:00:00.000Z'),
+    timezone: 'America/Chicago',
+    skillResolver: async () => skills,
+  })
+
+  assert.equal(result.execution.status, 'awaiting_approval')
+  assert.equal(database.state.toolExecutions[0].input.text, postText)
+  assert.equal(database.state.toolExecutions[0].input.schedule.sameText, true)
+  assert.equal(database.state.toolExecutions[0].input.schedule.scheduledAt, '2026-11-27T16:00:00.000Z')
+  assert.match(result.reply, /You chose a sensible default, so I kept the same post text for all 7 posts/)
+  assert.doesNotMatch(result.reply, /Before I proceed|Should I use the same text/)
+})
+
+test('invalid specialist JSON gets one repair attempt before task completion', async () => {
+  const database = createDatabase()
+  let taskAttempts = 0
+  const { registry, calls } = createRegistry({
+    handlers: {
+      'mock-primary': {
+        understanding: () => ({
+          text: JSON.stringify(objective({
+            goal: 'Analyze the supplied request.',
+            planningRequired: true,
+          })),
+        }),
+        planning: () => ({
+          text: JSON.stringify({
+            tasks: [task('analyze-request', {
+              type: 'analysis',
+              requiredCapability: 'reasoning',
+              specialistRole: 'research-reasoning',
+            })],
+          }),
+        }),
+        task_execution: () => {
+          taskAttempts += 1
+          return { text: 'not valid JSON' }
+        },
+        task_repair: () => ({ text: JSON.stringify({ output: 'Repaired specialist result.' }) }),
+      },
+    },
+  })
+
+  const result = await request({
+    database,
+    registry,
+    message: 'Analyze this request carefully.',
+    skillResolver: async () => [],
+  })
+
+  assert.equal(taskAttempts, 1)
+  assert.equal(calls.filter(({ stage }) => stage === 'task_repair').length, 1)
+  assert.equal(result.execution.status, 'completed')
+  assert.equal(result.execution.tasks[0].output, 'Repaired specialist result.')
 })
 
 test('matched Skill instructions and supporting context guide the generated reply', async () => {
@@ -1517,6 +1688,106 @@ test('LinkedIn post text does not bypass a required schedule clarification', asy
   assert.match(result.reply, /How many posts per week, and what time each day\?/)
   assert.equal(database.state.approvals.length, 0)
   assert.equal(calls.some(({ stage }) => stage === 'planning'), false)
+})
+
+test('LinkedIn date corrections preserve drafts, keep the skill, and replace the old approval', async () => {
+  const postText = 'SkinSnap helps businesses find customers.'
+  const drafts = Array.from({ length: 7 }, (_value, index) => `Existing draft ${index + 1}`)
+  const toolInput = {
+    text: drafts[0],
+    schedule: {
+      mode: 'recurring',
+      scheduledAt: '2026-11-26T16:00:00.000Z',
+      timezone: 'America/Chicago',
+      count: 7,
+      intervalMinutes: 1440,
+      sameText: false,
+      texts: drafts,
+    },
+  }
+  const answer = {
+    question_id: 'assistant-question:q1',
+    question_text: 'Should I use the same text 7 times, or make 7 different versions?',
+    option_clicked: 'Use a sensible default',
+    answer_text: 'Use a sensible default',
+  }
+  const activeTask = {
+    version: 1,
+    kind: 'linkedin_recurring',
+    status: 'awaiting_approval',
+    originalRequest: `Post this to LinkedIn for one week, every day at 10am: ${postText}`,
+    postText,
+    toolInput,
+    schedule: toolInput.schedule,
+    question: answer.question_text,
+    approvalId: 'approval-old',
+    skill: { name: 'manage-linkedin', version: '1.0.0' },
+    answers: [answer],
+  }
+  const database = createDatabase({
+    history: [
+      { id: 'user-original', role: 'user', content: activeTask.originalRequest, metadata: {} },
+      { id: 'assistant-question', role: 'assistant', content: answer.question_text, metadata: { activeTask: { ...activeTask, status: 'clarification_required', approvalId: null } } },
+      { id: 'user-answer', role: 'user', content: `1. ${answer.question_text}: ${answer.answer_text}`, metadata: { clarificationAnswers: [answer] } },
+      { id: 'assistant-approval', role: 'assistant', content: 'Seven drafts are waiting in Approvals.', metadata: { activeTask } },
+    ],
+  })
+  database.state.agentRuns.push({ id: 'agent-run-old', agentId: 'execution', status: 'waiting_approval', input: {} })
+  database.state.toolExecutions.push({
+    id: 'tool-execution-old',
+    toolId: 'linkedin_post',
+    agentRunId: 'agent-run-old',
+    status: 'pending_approval',
+    input: toolInput,
+  })
+  database.state.approvals.push({
+    id: 'approval-old',
+    toolExecutionId: 'tool-execution-old',
+    status: 'pending',
+    description: 'Old schedule',
+  })
+  const { registry, calls } = createRegistry()
+
+  const result = await request({
+    database,
+    registry,
+    message: "Don't approve yet. Fix dates to Fri Nov 27 10am through Thu Dec 3 10am. Same 7 texts, just fix dates.",
+    timezone: 'America/Chicago',
+    now: new Date('2026-11-26T20:00:00.000Z'),
+    skillResolver: async () => [
+      {
+        name: 'manage-linkedin',
+        description: 'Create and manage LinkedIn posts and schedules.',
+        version: '1.0.0',
+        body: 'Preserve the exact LinkedIn drafts and require approval before scheduling.',
+        tools: ['linkedin_post'],
+        enabled: true,
+      },
+      {
+        name: 'motion-graphics',
+        description: 'Create animated intros, motion graphics, and animated text.',
+        version: '1.0.0',
+        body: 'Create unique animations.',
+        tools: ['motion_graphics_create'],
+        enabled: true,
+      },
+    ],
+  })
+
+  const replacement = database.state.toolExecutions.find(({ id }) => id !== 'tool-execution-old')
+  assert.equal(result.skill.name, 'manage-linkedin')
+  assert.equal(result.execution.status, 'awaiting_approval')
+  assert.equal(database.state.approvals.find(({ id }) => id === 'approval-old').status, 'denied')
+  assert.equal(database.state.approvals.find(({ id }) => id !== 'approval-old').status, 'pending')
+  assert.equal(replacement.input.schedule.scheduledAt, '2026-11-27T16:00:00.000Z')
+  assert.deepEqual(replacement.input.schedule.texts, drafts)
+  assert.deepEqual(replacement.input.schedule.texts, toolInput.schedule.texts)
+  assert.match(result.reply, /Fri, Nov 27, 2026/)
+  assert.match(result.reply, /Thu, Dec 3, 2026/)
+  assert.match(result.reply, /Nothing was posted or scheduled/)
+  assert.equal(calls.length, 0)
+  assert.deepEqual(database.state.persistedMessages[1].metadata.skill, result.skill)
+  assert.equal(database.state.persistedMessages[1].metadata.activeTask.approvalId, 'approval-2')
 })
 
 test('parsed LinkedIn schedule is added to tool input before creating approval', async () => {

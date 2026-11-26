@@ -132,6 +132,104 @@ test('conversation context does not carry an old question after the user has rep
   assert.equal(context.pendingQuestion, null)
 })
 
+test('answered card metadata and the active task survive later conversation turns', async () => {
+  const activeTask = {
+    version: 1,
+    kind: 'linkedin_recurring',
+    status: 'awaiting_approval',
+    originalRequest: 'Post this to LinkedIn every day for one week.',
+    approvalId: 'approval-1',
+    skill: { name: 'manage-linkedin', version: '1.0.0' },
+    answers: [{
+      question_id: 'question-1:q1',
+      question_text: 'Should I use the same text 7 times, or make 7 different versions?',
+      option_clicked: 'Use a sensible default',
+      answer_text: 'Use a sensible default',
+    }],
+  }
+  const database = {
+    async query(sql) {
+      if (sql.includes('FROM conversations')) return { rowCount: 1, rows: [{ project_id: null }] }
+      if (sql.includes('FROM messages')) {
+        return {
+          rows: [
+            { id: 'assistant-2', role: 'assistant', content: 'Drafts are waiting in Approvals.', metadata: { activeTask } },
+            { id: 'user-2', role: 'user', content: '1. Same text or different versions: Use a sensible default', metadata: { clarificationAnswers: activeTask.answers } },
+            { id: 'assistant-1', role: 'assistant', content: 'Should I use the same text 7 times, or make 7 different versions?', metadata: {} },
+            { id: 'user-1', role: 'user', content: activeTask.originalRequest, metadata: {} },
+          ],
+        }
+      }
+      return { rows: [] }
+    },
+  }
+
+  const context = await retrieveContext({ userId: 'user-1', conversationId: 'conversation-1', database })
+
+  assert.equal(context.pendingQuestion, null)
+  assert.equal(context.activeTask.approvalId, 'approval-1')
+  assert.equal(context.activeTask.skill.name, 'manage-linkedin')
+  assert.equal(context.activeTask.answers[0].option_clicked, 'Use a sensible default')
+  assert.deepEqual(context.messages[2].metadata.clarificationAnswers, activeTask.answers)
+})
+
+test('pending LinkedIn approval recovers active drafts for legacy conversations', async () => {
+  const toolInput = {
+    text: 'Original post',
+    schedule: {
+      mode: 'recurring',
+      scheduledAt: '2026-11-26T16:00:00.000Z',
+      timezone: 'America/Chicago',
+      count: 7,
+      intervalMinutes: 1440,
+      sameText: false,
+      texts: Array.from({ length: 7 }, (_value, index) => `Draft ${index + 1}`),
+    },
+  }
+  const database = {
+    async query(sql, params) {
+      if (sql.includes('FROM conversations')) return { rowCount: 1, rows: [{ project_id: null }] }
+      if (sql.includes('FROM messages')) {
+        return {
+          rows: [
+            { id: 'assistant-2', role: 'assistant', content: 'Drafts are waiting in Approvals.', metadata: { skill: { name: 'manage-linkedin' } } },
+            { id: 'user-2', role: 'user', content: '1. Should I use the same text 7 times, or make 7 different versions?: Use a sensible default', metadata: {} },
+            { id: 'assistant-1', role: 'assistant', content: 'Should I use the same text 7 times, or make 7 different versions?', metadata: {} },
+            { id: 'user-1', role: 'user', content: 'Post this to LinkedIn every day at 10am for one week.', metadata: {} },
+          ],
+        }
+      }
+      if (sql.includes('FROM jobs j')) {
+        assert.deepEqual(params, ['conversation-1', 'user-1'])
+        return {
+          rows: [{
+            approval_id: 'approval-old',
+            tool_input: toolInput,
+            continuation: {
+            request: '1. Should I use the same post text 7 times?: Use a sensible default',
+            contextMessages: [
+              { role: 'user', content: 'Post this to LinkedIn every day at 10am for one week.' },
+              { role: 'user', content: '1. Should I use the same post text 7 times?: Use a sensible default' },
+            ],
+            skill: { name: 'manage-linkedin', version: '1.0.0' },
+            },
+          }],
+        }
+      }
+      return { rows: [] }
+    },
+  }
+
+  const context = await retrieveContext({ userId: 'user-1', conversationId: 'conversation-1', database })
+
+  assert.equal(context.activeTask.status, 'awaiting_approval')
+  assert.equal(context.activeTask.approvalId, 'approval-old')
+  assert.deepEqual(context.activeTask.toolInput, toolInput)
+  assert.equal(context.activeTask.skill.name, 'manage-linkedin')
+  assert.equal(context.activeTask.originalRequest, 'Post this to LinkedIn every day at 10am for one week.')
+  assert.equal(context.activeTask.answers[0].option_clicked, 'Use a sensible default')
+})
+
 test('conversation cannot be reused under a different project context', async () => {
   const database = {
     async query(sql) {
