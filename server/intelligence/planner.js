@@ -1,5 +1,10 @@
 import { invokeWithProviderFallback } from './error-recovery.js'
-import { buildPlanMessages, parsePlanGraph, PLAN_GRAPH_SCHEMA } from './plan-graph.js'
+import {
+  buildPlanMessages,
+  createFallbackToolPlan,
+  parsePlanGraph,
+  PLAN_GRAPH_SCHEMA,
+} from './plan-graph.js'
 
 export async function createPlanGraph(registry, provider, {
   message,
@@ -12,6 +17,7 @@ export async function createPlanGraph(registry, provider, {
   signal = null,
   allowedToolIds = null,
   requiresExternalAction = false,
+  skill = null,
 }) {
   const request = {
     messages: buildPlanMessages({ message, objective, contextMessages, attachmentContext, allowedToolIds }),
@@ -23,7 +29,12 @@ export async function createPlanGraph(registry, provider, {
   let fallbackUsed = completion.fallbackUsed === true
   let planGraph
   try {
-    planGraph = parsePlanGraph(result.text, { allowedToolIds, requiresExternalAction })
+    planGraph = parsePlanGraph(result.text, {
+      allowedToolIds,
+      requiresExternalAction,
+      message,
+      skill,
+    })
   } catch {
     const repairMessages = [
       request.messages[0],
@@ -54,7 +65,25 @@ export async function createPlanGraph(registry, provider, {
     activeProvider = repair.provider
     fallbackUsed ||= repair.fallbackUsed === true
     result = repair.result
-    planGraph = parsePlanGraph(result.text, { allowedToolIds, requiresExternalAction })
+    try {
+      planGraph = parsePlanGraph(result.text, {
+        allowedToolIds,
+        requiresExternalAction,
+        message,
+        skill,
+      })
+    } catch (repairError) {
+      const fallback = requiresExternalAction
+        ? createFallbackToolPlan({ message, allowedToolIds, skill })
+        : null
+      if (!fallback) throw repairError
+      planGraph = parsePlanGraph(JSON.stringify(fallback), {
+        allowedToolIds,
+        requiresExternalAction,
+        message,
+        skill,
+      })
+    }
   }
   return {
     planGraph,

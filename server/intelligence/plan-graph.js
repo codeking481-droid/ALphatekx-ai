@@ -6,6 +6,7 @@ const CAPABILITIES = ['reasoning', 'research', 'writing', 'calculation', 'review
 const SPECIALIST_ROLES = ['general', 'research-reasoning', 'execution']
 const RISK_LEVELS = ['low', 'medium', 'high', 'critical']
 const INPUT_KINDS = ['user_request', 'conversation_history', 'project_context', 'memory', 'attachment', 'resource', 'task_output', 'tool_output']
+const TOOL_MATCH_STOP_WORDS = new Set(['after', 'and', 'for', 'from', 'into', 'the', 'this', 'to', 'with'])
 const TASK_KEYS = [
   'id',
   'description',
@@ -110,7 +111,12 @@ export function parsePlanGraph(text, options = {}) {
   return validatePlanGraph(normalizePlanGraph(value, options), options)
 }
 
-function normalizePlanGraph(graph, { allowedToolIds = null, requiresExternalAction = false } = {}) {
+function normalizePlanGraph(graph, {
+  allowedToolIds = null,
+  requiresExternalAction = false,
+  message = '',
+  skill = null,
+} = {}) {
   assertObject(graph, 'PlanGraph')
   if (!Array.isArray(graph.tasks)) throw new Error('PlanGraph tasks must be an array.')
   const rawTasks = graph.tasks.slice(0, 12).filter((task) =>
@@ -123,8 +129,8 @@ function normalizePlanGraph(graph, { allowedToolIds = null, requiresExternalActi
     ids.add(id)
     const rawRequiredInputs = normalizeInputs(task.requiredInputs)
     const toolInput = normalizeToolInput(task.toolInput)
-    const inferredToolId = requiresExternalAction && !rawRequiredInputs.some((input) => input.kind === 'tool_output')
-      ? inferToolId(toolInput, allowedToolIds)
+    const inferredToolId = requiresExternalAction
+      ? inferToolIdFromRequest(message, allowedToolIds, skill) || inferToolId(toolInput, allowedToolIds)
       : null
     const hasToolTaskShape = rawRequiredInputs.some((input) => input.kind === 'tool_output') ||
       Boolean(inferredToolId) || (requiresExternalAction && Boolean(toolInput))
@@ -153,9 +159,9 @@ function normalizePlanGraph(graph, { allowedToolIds = null, requiresExternalActi
       task.completionConditions,
       10,
       500,
-      'The task output is present.',
+      type === 'tool' ? 'Result submitted for approval.' : 'The task output is present.',
     )
-    const normalized = {
+    let normalized = {
       id,
       description,
       type,
@@ -176,6 +182,14 @@ function normalizePlanGraph(graph, { allowedToolIds = null, requiresExternalActi
       completionConditions,
     }
     if (toolInput) normalized.toolInput = toolInput
+    if (type === 'tool' && !requiresExternalAction) {
+      normalized = normalizeToolTask(normalized, {
+        message,
+        skill,
+        allowedToolIds,
+        requiresExternalAction,
+      })
+    }
     return normalized
   })
 
@@ -191,29 +205,12 @@ function normalizePlanGraph(graph, { allowedToolIds = null, requiresExternalActi
       selected,
       ...tasks.filter((task) => task !== selected),
     ].map((task) => task.toolInput))
-    const canonicalTask = {
+    const canonicalTask = normalizeToolTask({
       ...selected,
       id: 'tool-task-1',
-      type: 'tool',
-      requiredInputs: toolReference ? [toolReference] : [],
-      dependencies: [],
-      requiredCapability: 'tool_execution',
-      specialistRole: 'execution',
-      maxAttempts: selected.maxAttempts,
-      acceptanceCriteria: normalizeStringList(
-        selected.acceptanceCriteria,
-        10,
-        500,
-        'Tool result ready for approval',
-      ),
-      completionConditions: normalizeStringList(
-        selected.completionConditions,
-        10,
-        500,
-        'Result submitted for approval.',
-      ),
+      requiredInputs: toolReference ? [toolReference] : selected.requiredInputs,
       ...(mergedInput ? { toolInput: mergedInput } : {}),
-    }
+    }, { message, skill, allowedToolIds, requiresExternalAction: true })
     return { tasks: [canonicalTask] }
   }
 
@@ -233,6 +230,94 @@ function normalizePlanGraph(graph, { allowedToolIds = null, requiresExternalActi
     }
   }
   return { tasks }
+}
+
+export function normalizeToolTask(task, {
+  message = '',
+  skill = null,
+  allowedToolIds = null,
+  requiresExternalAction = false,
+} = {}) {
+  const toolReference = task.requiredInputs.find((input) => input.kind === 'tool_output')
+  const candidateIds = new Set(allowedToolIds || listTools().map(({ id }) => id))
+  const referencedId = toolReference?.toolId
+  const inferredId = (requiresExternalAction ? inferToolIdFromRequest(message, [...candidateIds], skill) : null) ||
+    (!referencedId ? inferToolId(task.toolInput, [...candidateIds]) : null)
+  const toolId = requiresExternalAction ? inferredId || referencedId : referencedId || inferredId
+  const tool = getTool(toolId)
+  if ((!tool || !candidateIds.has(tool.id)) && !requiresExternalAction) {
+    return { ...task, requiredCapability: 'tool_execution', specialistRole: 'execution' }
+  }
+  if (!tool || !candidateIds.has(tool.id)) {
+    throw new Error('The requested external action does not match an available registered tool.')
+  }
+
+  const toolInput = mergeToolInputs(tool, [task.toolInput]) || {}
+  fillMessageInput(tool, toolInput, message)
+  const validSchema = validateJsonSchema(tool.inputSchema, toolInput).length === 0
+  let validCustomInput = false
+  if (validSchema) {
+    try {
+      validCustomInput = tool.validate(toolInput) === true
+    } catch {
+      validCustomInput = false
+    }
+  }
+  if (!validSchema || !validCustomInput) {
+    throw new Error(`The ${tool.name} action is missing required information; no action was submitted for approval.`)
+  }
+
+  return {
+    ...task,
+    id: task.id || 'tool-task-1',
+    description: normalizeText(task.description, `Prepare ${tool.name} for approval.`, 800),
+    type: 'tool',
+    requiredInputs: [{
+      kind: 'tool_output',
+      description: normalizeText(toolReference?.description, `Result from ${tool.id}.`, 500),
+      toolId: tool.id,
+    }],
+    dependencies: [],
+    expectedOutput: normalizeText(task.expectedOutput, `${tool.name} result.`, 800),
+    acceptanceCriteria: normalizeStringList(
+      task.acceptanceCriteria,
+      10,
+      500,
+      'Tool result ready for approval',
+    ),
+    riskClassification: RISK_LEVELS.includes(task.riskClassification) ? task.riskClassification : 'medium',
+    requiredCapability: 'tool_execution',
+    specialistRole: 'execution',
+    maxAttempts: normalizeAttempts(task.maxAttempts, 1),
+    completionConditions: normalizeStringList(
+      task.completionConditions,
+      10,
+      500,
+      'Result submitted for approval.',
+    ),
+    toolInput,
+  }
+}
+
+export function createFallbackToolPlan({ message, allowedToolIds = null, skill = null } = {}) {
+  const toolId = inferToolIdFromRequest(message, allowedToolIds, skill)
+  if (!toolId) return null
+  return {
+    tasks: [normalizeToolTask({
+      id: 'tool-task-1',
+      description: `Perform the requested ${getTool(toolId).name} action.`,
+      type: 'tool',
+      requiredInputs: [],
+      dependencies: [],
+      expectedOutput: `${getTool(toolId).name} result.`,
+      acceptanceCriteria: ['Tool result ready for approval'],
+      riskClassification: 'medium',
+      requiredCapability: 'tool_execution',
+      specialistRole: 'execution',
+      maxAttempts: 1,
+      completionConditions: ['Result submitted for approval.'],
+    }, { message, skill, allowedToolIds, requiresExternalAction: true })],
+  }
 }
 
 function normalizeTaskId(value, index, used) {
@@ -286,8 +371,9 @@ function normalizeInputs(value) {
         if (typeof input.sourceTaskId !== 'string' || !input.sourceTaskId.trim()) return []
         normalized.sourceTaskId = input.sourceTaskId.trim().slice(0, 64)
       } else if (input.kind === 'tool_output') {
-        if (typeof input.toolId !== 'string' || !input.toolId.trim()) return []
-        normalized.toolId = input.toolId.trim().slice(0, 64)
+        if (typeof input.toolId === 'string' && input.toolId.trim()) {
+          normalized.toolId = input.toolId.trim().slice(0, 64)
+        }
       }
       return [normalized]
     })
@@ -318,6 +404,56 @@ function inferToolId(toolInput, allowedToolIds) {
       }
     })
   return matches.length === 1 ? matches[0].id : null
+}
+
+function inferToolIdFromRequest(message, allowedToolIds, skill) {
+  if (typeof message !== 'string' || !message.trim()) return null
+  const toolIds = allowedToolIds || listTools().map(({ id }) => id)
+  const messageTokens = tokenize(message)
+  const skillToolIds = new Set(Array.isArray(skill?.tools) ? skill.tools : [])
+  const candidates = toolIds
+    .map((id) => getTool(id))
+    .filter(Boolean)
+    .map((tool) => {
+      const identityTokens = new Set(tokenize([
+        tool.id.replace(/[._-]+/g, ' '),
+        tool.name,
+        tool.connector,
+      ].join(' ')))
+      const descriptionTokens = new Set(tokenize(tool.description))
+      const score = [...messageTokens].reduce((total, token) =>
+        total + (identityTokens.has(token) ? 2 : descriptionTokens.has(token) ? 1 : 0), 0)
+      return { id: tool.id, score, skillMatch: skillToolIds.has(tool.id) }
+    })
+    .sort((left, right) => right.score - left.score || Number(right.skillMatch) - Number(left.skillMatch))
+  if (!candidates.length || candidates[0].score < (candidates[0].skillMatch ? 2 : 3)) return null
+  if (candidates[1] && candidates[1].score === candidates[0].score &&
+    candidates[1].skillMatch === candidates[0].skillMatch) return null
+  return candidates[0].id
+}
+
+function tokenize(value) {
+  return new Set((String(value).toLowerCase().match(/[a-z][a-z0-9]+/g) || [])
+    .filter((token) => !TOOL_MATCH_STOP_WORDS.has(token)))
+}
+
+function fillMessageInput(tool, input, message) {
+  if (!message.trim()) return
+  const properties = tool.inputSchema.properties || {}
+  const textProperty = ['text', 'body', 'content', 'message', 'query']
+    .find((key) => properties[key]?.type === 'string' &&
+      tool.inputSchema.required?.includes(key) && !String(input[key] || '').trim())
+  if (!textProperty) return
+  input[textProperty] = cleanActionMessage(message, tool)
+}
+
+function cleanActionMessage(message, tool) {
+  const connector = tool.connector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const name = tool.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  return message.trim()
+    .replace(new RegExp(`^(?:please\\s+)?(?:post|publish)\\s+(?:this\\s+)?(?:to|on)\\s+${connector}\\s*:?\\s*`, 'i'), '')
+    .replace(new RegExp(`^(?:please\\s+)?${name}\\s*:?\\s*`, 'i'), '')
+    .trim()
 }
 
 function mergeToolInputs(tool, inputs) {

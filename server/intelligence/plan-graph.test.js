@@ -149,6 +149,65 @@ test('model PlanGraphs collapse dependent tasks into one LinkedIn tool task', ()
   }
 })
 
+test('model PlanGraphs repair a missing tool ID and incomplete execution fields before validation', () => {
+  const unregister = registerLinkedInTools()
+  try {
+    const graph = parsePlanGraph(JSON.stringify({
+      tasks: [task('publish', {
+        type: 'tool',
+        requiredInputs: [{
+          kind: 'tool_output',
+          description: 'Publishing result.',
+        }],
+        dependencies: ['draft'],
+        requiredCapability: 'planner',
+        specialistRole: 'general',
+        acceptanceCriteria: [],
+        completionConditions: null,
+      })],
+    }), {
+      allowedToolIds: ['linkedin_post'],
+      requiresExternalAction: true,
+      message: 'Post to LinkedIn: Biz is live.',
+    })
+
+    const [normalized] = graph.tasks
+    assert.equal(normalized.id, 'tool-task-1')
+    assert.equal(normalized.type, 'tool')
+    assert.equal(normalized.requiredInputs[0].toolId, 'linkedin_post')
+    assert.deepEqual(normalized.dependencies, [])
+    assert.deepEqual(normalized.acceptanceCriteria, ['Tool result ready for approval'])
+    assert.equal(normalized.requiredCapability, 'tool_execution')
+    assert.equal(normalized.specialistRole, 'execution')
+    assert.deepEqual(normalized.toolInput, { text: 'Biz is live.' })
+  } finally {
+    unregister.forEach((remove) => remove())
+  }
+})
+
+test('selected connector skill can disambiguate a tool task from a short action request', () => {
+  const unregister = registerLinkedInTools()
+  try {
+    const graph = parsePlanGraph(JSON.stringify({
+      tasks: [task('publish', {
+        type: 'tool',
+        requiredInputs: [],
+        toolInput: null,
+      })],
+    }), {
+      allowedToolIds: ['linkedin_post', 'linkedin_reply'],
+      requiresExternalAction: true,
+      message: 'Make a post about Biz.',
+      skill: { name: 'manage-linkedin', tools: ['linkedin_post', 'linkedin_reply'] },
+    })
+
+    assert.equal(graph.tasks[0].requiredInputs[0].toolId, 'linkedin_post')
+    assert.ok(graph.tasks[0].toolInput.text)
+  } finally {
+    unregister.forEach((remove) => remove())
+  }
+})
+
 test('external-action task collapse is connector-agnostic for Gmail', () => {
   const unregister = registerTool({
     id: 'gmail_send',

@@ -136,6 +136,7 @@ export async function processChatRequest({
       signal,
       allowedToolIds,
       requiresExternalAction: objective.requiresExternalAction,
+      skill: selectedSkill,
     })
     planGraph = planning.planGraph
     activeProvider = planning.provider

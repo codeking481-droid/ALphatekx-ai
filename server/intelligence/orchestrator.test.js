@@ -1040,6 +1040,38 @@ test('LinkedIn post requests create an approval with the exact preview before ex
   assert.match(result.reply, /Approvals/)
 })
 
+test('malformed planner fallback creates a complete LinkedIn approval task', async () => {
+  const database = createDatabase()
+  const { registry, calls } = createRegistry({
+    handlers: {
+      'mock-primary': {
+        understanding: () => ({
+          text: JSON.stringify(objective({
+            goal: 'Publish a LinkedIn post.',
+            deliverables: ['LinkedIn post published'],
+            requiresExternalAction: true,
+          })),
+        }),
+        planning: () => ({ text: '{"tasks":' }),
+      },
+    },
+  })
+
+  const result = await request({
+    database,
+    registry,
+    message: 'Post to LinkedIn: Biz is live.',
+    skillResolver: async () => [],
+  })
+
+  assert.equal(calls.filter(({ stage }) => stage === 'planning').length, 2)
+  assert.equal(result.execution.status, 'awaiting_approval')
+  assert.equal(result.execution.tasks[0].taskId, 'tool-task-1')
+  assert.equal(database.state.toolExecutions[0].toolId, 'linkedin_post')
+  assert.deepEqual(database.state.toolExecutions[0].input, { text: 'Biz is live.' })
+  assert.equal(database.state.approvals[0].status, 'pending')
+})
+
 test('LinkedIn post plans with malformed acceptance criteria still reach approval', async () => {
   const cases = [
     { name: 'string', value: 'Draft ready', expected: ['Draft ready'] },
@@ -1185,6 +1217,57 @@ test('dependent Gmail tool plans collapse into one generic approval task without
     assert.match(result.reply, /Send Gmail Message/)
     assert.match(result.reply, /Review the exact preview in \[Approvals\]/)
     assert.equal(database.state.agentRuns.length, 1)
+  } finally {
+    unregister()
+  }
+})
+
+test('malformed planner fallback can create approval for a registered Gmail-shaped tool', async () => {
+  const unregister = registerTool({
+    id: 'gmail_send',
+    name: 'Send Gmail Message',
+    connector: 'gmail',
+    description: 'Send an email after user approval.',
+    inputSchema: {
+      type: 'object',
+      properties: { text: { type: 'string', minLength: 1 } },
+      required: ['text'],
+      additionalProperties: false,
+    },
+    permissions: ['tool:approved'],
+    requiresApproval: true,
+    validate: (input) => typeof input?.text === 'string' && input.text.trim().length > 0,
+    execute: async () => ({ sent: true }),
+  })
+  try {
+    const database = createDatabase()
+    const { registry } = createRegistry({
+      handlers: {
+        'mock-primary': {
+          understanding: () => ({
+            text: JSON.stringify(objective({
+              goal: 'Send an email to Daniel.',
+              deliverables: ['Email sent'],
+              requiresExternalAction: true,
+            })),
+          }),
+          planning: () => ({ text: 'not valid planner JSON' }),
+        },
+      },
+    })
+
+    const result = await request({
+      database,
+      registry,
+      message: 'Send email to Daniel',
+      skillResolver: async () => [],
+    })
+
+    assert.equal(result.execution.status, 'awaiting_approval')
+    assert.equal(result.execution.tasks[0].taskId, 'tool-task-1')
+    assert.equal(database.state.toolExecutions[0].toolId, 'gmail_send')
+    assert.deepEqual(database.state.toolExecutions[0].input, { text: 'Send email to Daniel' })
+    assert.equal(database.state.approvals[0].status, 'pending')
   } finally {
     unregister()
   }
