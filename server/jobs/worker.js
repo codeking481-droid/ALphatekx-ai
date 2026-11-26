@@ -141,7 +141,13 @@ export function createJobWorker({
         log('error', 'job.execution.failed', {
           jobId: job.id,
           workerId,
-          error: { name: error.name || 'Error', code: error.code || null, message: error.message || 'Task failed.' },
+          error: {
+            name: error.name || 'Error',
+            provider: error.provider || null,
+            code: error.code || null,
+            upstreamStatus: error.upstreamStatus || null,
+            message: error.message || 'Task failed.',
+          },
         })
       }
     } finally {

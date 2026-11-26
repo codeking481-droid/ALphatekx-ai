@@ -114,6 +114,27 @@ test('configured AI workers call their URL directly without a key or model', asy
   }
 })
 
+test('AI worker errors report the upstream status and a useful diagnostic', async () => {
+  const provider = createProviderRegistry({
+    AI_PROVIDER_URL_1: 'https://worker-one.workers.dev',
+  }).get('worker1')
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = async () => new Response('unavailable', { status: 503 })
+
+  try {
+    await assert.rejects(provider.generate({ messages: [] }), (error) => {
+      assert.equal(error.provider, 'worker1')
+      assert.equal(error.upstreamStatus, 503)
+      assert.equal(error.code, 'worker_request_failed')
+      assert.match(error.message, /AI Worker 1 returned HTTP 503/)
+      assert.match(error.message, /Check the worker logs and its upstream model service/)
+      return true
+    })
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
 test('AI worker serializes an object response for structured backend prompts', async () => {
   const provider = createProviderRegistry({
     AI_PROVIDER_URL_1: 'https://worker-one.workers.dev',

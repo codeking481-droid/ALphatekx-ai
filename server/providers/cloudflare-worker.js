@@ -25,7 +25,14 @@ export function createCloudflareWorkerProvider({ id, name, url, timeoutMs }) {
         body: JSON.stringify({ messages }),
       })
       if (!response.ok) {
-        throw new ProviderError('The AI worker request failed.', {
+        const detail = response.status === 401 || response.status === 403
+          ? ' Check the worker authentication settings.'
+          : response.status === 404
+            ? ' Check the configured worker URL.'
+            : response.status >= 500
+              ? ' Check the worker logs and its upstream model service.'
+              : ''
+        throw new ProviderError(`${name} returned HTTP ${response.status}.${detail}`, {
           provider: id,
           status: response.status >= 500 ? 503 : 502,
           upstreamStatus: response.status,
