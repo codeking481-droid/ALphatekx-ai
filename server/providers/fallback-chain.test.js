@@ -296,7 +296,8 @@ test('no provider keys configured still returns a local response instead of cras
   ], { database: { query: async () => ({ rowCount: 1 }) } })
 
   assert.equal(result.provider.id, 'local-fallback')
-  assert.match(result.result.text, /Help me draft a reply/)
+  assert.equal(result.result.text, 'I can’t answer that reliably right now. Please try again shortly.')
+  assert.doesNotMatch(result.result.text, /Help me draft a reply/)
 })
 
 test('local fallback builds a structured ObjectiveSpec for animation requests', async () => {
@@ -385,6 +386,28 @@ test('local fallback responds naturally to a greeting', async () => {
   ], { database: { query: async () => ({ rowCount: 1 }) } })
 
   assert.equal(result.result.text, 'Hi! What can I help you with?')
+})
+
+test('local fallback answers common small-talk and grammar questions instead of echoing them', async () => {
+  const ask = async (content) => {
+    const result = await invokeFallbackChain(mockRegistry([]), null, [
+      { role: 'user', content },
+    ], { database: { query: async () => ({ rowCount: 1 }) } })
+    return result.result.text
+  }
+
+  assert.match(await ask('How do you do?'), /I’m doing well and ready to help/)
+  assert.match(await ask('Are you fine?'), /thanks for asking/)
+  assert.match(await ask('What is a noun?'), /names a person, place, thing, or idea/)
+})
+
+test('unsupported local fallback requests explain the limitation without repeating the prompt', async () => {
+  const result = await invokeFallbackChain(mockRegistry([]), null, [
+    { role: 'user', content: 'Explain the latest changes in quantum networking.' },
+  ], { database: { query: async () => ({ rowCount: 1 }) } })
+
+  assert.equal(result.result.text, 'I can’t answer that reliably right now. Please try again shortly.')
+  assert.doesNotMatch(result.result.text, /quantum networking/)
 })
 
 test('provider failures refuse to fabricate a motion graphic', async () => {

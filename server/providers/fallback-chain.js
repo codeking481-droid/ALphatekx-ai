@@ -346,9 +346,32 @@ function createLocalFallback(messages) {
   if (/^(?:hi|hello|hey|good morning|good afternoon|good evening)[!. ]*$/i.test(quotedRequest)) {
     return 'Hi! What can I help you with?'
   }
+  const conversationalResponse = createBasicConversationalResponse(quotedRequest)
+  if (conversationalResponse) return conversationalResponse
   return quotedRequest
-    ? `I can help with your request: "${quotedRequest}". What would you like to do next?`
-    : 'What would you like help with?'
+    ? 'I can’t answer that reliably right now. Please try again shortly.'
+    : 'I’m temporarily unable to respond. Please try again shortly.'
+}
+
+function createBasicConversationalResponse(message) {
+  if (/^(?:how do you do|how are you|are you (?:fine|okay|well)|how(?:'s| is) it going)[?.! ]*$/i.test(message)) {
+    return 'I’m doing well and ready to help—thanks for asking. What would you like to work on?'
+  }
+
+  const definitionMatch = /^(?:what is|what’s|define|meaning of)\s+(?:a|an|the\s+)?([a-z][a-z -]{0,30})[?.!]*$/i.exec(message)
+  if (!definitionMatch) return null
+  const term = definitionMatch[1].trim().toLowerCase().replace(/^(?:a|an|the)\s+/, '').replace(/s$/, '')
+  const definitions = {
+    noun: 'A noun names a person, place, thing, or idea. Examples: teacher, city, book, and freedom.',
+    verb: 'A verb expresses an action or state of being. Examples: run, think, and is.',
+    adjective: 'An adjective describes a noun or pronoun. In “a bright room,” bright is the adjective.',
+    adverb: 'An adverb modifies a verb, adjective, or another adverb. In “She spoke softly,” softly modifies spoke.',
+    pronoun: 'A pronoun takes the place of a noun. Examples: I, you, they, and it.',
+    preposition: 'A preposition shows a relationship—often place, time, or direction. Examples: in, before, and across.',
+    conjunction: 'A conjunction connects words, phrases, or clauses. Examples: and, but, and because.',
+    interjection: 'An interjection is a short expression of feeling, such as “oh!”, “wow!”, or “ouch!”',
+  }
+  return definitions[term] || null
 }
 
 function createLinkedInDraft(message) {
