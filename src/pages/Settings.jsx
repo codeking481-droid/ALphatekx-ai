@@ -29,6 +29,9 @@ export default function Settings() {
   const [keyError, setKeyError] = useState("");
   const [keyNotice, setKeyNotice] = useState("");
   const [plan, setPlan] = useState({ plan: "free", hasOwnKey: false });
+  const [aiProviders, setAiProviders] = useState([]);
+  const [providerStatus, setProviderStatus] = useState({});
+  const [providerTestBusy, setProviderTestBusy] = useState("");
 
   useEffect(() => {
     api.auth
@@ -61,6 +64,34 @@ export default function Settings() {
       })
       .catch(() => setKeyError("Your key and plan settings couldn't be loaded."));
   }, []);
+
+  useEffect(() => {
+    api.providers.list()
+      .then(({ providers }) => setAiProviders(
+        (providers || []).filter((provider) => ["openrouter", "gemini", "worker1"].includes(provider.id))
+      ))
+      .catch(() => setProviderStatus({ openrouter: { status: "failed", error: "Provider status couldn't be loaded." } }));
+  }, []);
+
+  const testProvider = async (provider) => {
+    setProviderTestBusy(provider.id);
+    setProviderStatus((current) => ({ ...current, [provider.id]: { status: "testing" } }));
+    try {
+      const result = await api.providers.test(provider.id);
+      setProviderStatus((current) => ({ ...current, [provider.id]: result }));
+    } catch (requestError) {
+      setProviderStatus((current) => ({
+        ...current,
+        [provider.id]: {
+          status: "failed",
+          upstreamStatus: requestError.upstreamStatus,
+          error: requestError.message,
+        },
+      }));
+    } finally {
+      setProviderTestBusy("");
+    }
+  };
 
   const saveProfile = async () => {
     setSaving(true);
@@ -208,6 +239,60 @@ export default function Settings() {
           })}
         </div>
         {settingsError && <p className="mt-3 text-[12.5px] text-destructive">{settingsError}</p>}
+      </Section>
+
+      <Section title="AI provider" description="Biz uses OpenRouter first, then Gemini, then Worker 1.">
+        <div className="max-w-xl space-y-3">
+          {aiProviders.map((provider, index) => {
+            const status = providerStatus[provider.id];
+            const label = index === 0 ? "Primary" : index === 1 ? "Fallback 1" : "Fallback 2";
+            const busy = providerTestBusy === provider.id;
+            return (
+              <div key={provider.id} className="rounded-xl border border-border/70 p-3.5">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <p className="text-[13px] font-medium">{label}: {provider.name}</p>
+                    <p className="mt-1 text-[11px] text-muted-foreground">
+                      {provider.model || "Model not configured"}
+                      {provider.keySuffix ? ` · key ending in ${provider.keySuffix}` : ""}
+                      {provider.secretSource ? ` · ${provider.secretSource}` : ""}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {status?.status === "connected" && (
+                      <span className="text-[11.5px] font-medium text-emerald-600">
+                        Connected{status.latencyMs ? ` · ${status.latencyMs} ms` : ""}
+                      </span>
+                    )}
+                    {status?.status === "failed" && (
+                      <span className="max-w-[220px] text-right text-[11.5px] text-destructive">
+                        Failed{status.upstreamStatus ? ` · HTTP ${status.upstreamStatus}` : ""}
+                      </span>
+                    )}
+                    {status?.status === "testing" && (
+                      <span className="text-[11.5px] text-muted-foreground">Testing…</span>
+                    )}
+                    <button
+                      type="button"
+                      disabled={Boolean(providerTestBusy)}
+                      onClick={() => testProvider(provider)}
+                      className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-border px-2.5 text-xs text-muted-foreground hover:bg-accent disabled:opacity-50"
+                    >
+                      {busy && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                      Test
+                    </button>
+                  </div>
+                </div>
+                {status?.status === "failed" && status.error && (
+                  <p className="mt-2 text-[11.5px] text-destructive">{status.error}</p>
+                )}
+              </div>
+            );
+          })}
+          {!aiProviders.length && (
+            <p className="text-[12.5px] text-muted-foreground">No AI providers are configured on the server.</p>
+          )}
+        </div>
       </Section>
 
       <Section title="Your API keys (BYOK)" description="Keys are encrypted on the server and never shown again after saving.">

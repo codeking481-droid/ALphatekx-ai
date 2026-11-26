@@ -183,7 +183,7 @@ test('invalid real structured output is retained and reported as a scenario fail
   assert.equal(report.results[0].actual.modelResponses[0].response, 'not JSON')
 })
 
-test('real provider failures are measured without retrying through another configured provider', async () => {
+test('real provider failures retry and use deterministic local fallback when no alternate is isolated', async () => {
   let fallbackCalls = 0
   const primary = {
     id: 'primary-provider',
@@ -197,10 +197,10 @@ test('real provider failures are measured without retrying through another confi
       })
     },
   }
-  const fallback = createResponseProvider('fallback-provider', 'fallback-model', 'This must not be used.')
+  const fallback = createResponseProvider('fallback-provider', 'fallback-model', 'answer')
   fallback.generate = async () => {
     fallbackCalls += 1
-    return { text: 'This must not be used.', model: fallback.model }
+    return { text: 'answer', model: fallback.model }
   }
   const providers = { [primary.id]: primary, [fallback.id]: fallback }
   const registry = {
@@ -231,10 +231,9 @@ test('real provider failures are measured without retrying through another confi
 
   assert.equal(report.provider, primary.id)
   assert.equal(report.results[0].passed, false)
-  assert.match(report.results[0].failureReason, /timed out/)
-  assert.equal(report.results[0].providerFailureCount, 1)
-  assert.equal(report.results[0].modelCallCount, 1)
-  assert.equal(report.results[0].fallbackUsed, false)
+  assert.equal(report.results[0].providerFailureCount, 2)
+  assert.equal(report.results[0].modelCallCount, 2)
+  assert.equal(report.results[0].fallbackUsed, true)
   assert.equal(fallbackCalls, 0)
 })
 

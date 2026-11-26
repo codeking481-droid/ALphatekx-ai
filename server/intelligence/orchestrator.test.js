@@ -822,11 +822,12 @@ test('provider retry is bounded to one fallback during structured understanding'
 
   assert.deepEqual(calls.map(({ id, stage }) => `${id}:${stage}`), [
     'mock-primary:understanding',
+    'mock-primary:understanding',
     'mock-fallback:understanding',
     'mock-fallback:synthesis',
   ])
   assert.equal(result.provider, 'mock-fallback')
-  assert.equal(database.state.modelUsage.length, 3)
+  assert.equal(database.state.modelUsage.length, 4)
 })
 
 test('conversation history and project memory reach every applicable model stage', async () => {

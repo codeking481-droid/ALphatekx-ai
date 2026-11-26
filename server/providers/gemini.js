@@ -1,7 +1,7 @@
 import { fetchProvider, ProviderError, providerError, providerRequestSignal } from './errors.js'
 
 export function createGeminiProvider({ apiKey, model, timeoutMs }) {
-  const endpoint = (suffix = '') => `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}${suffix}`
+  const endpoint = (suffix = '') => `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}${suffix}${suffix.includes('?') ? '&' : '?'}key=${encodeURIComponent(apiKey)}`
   return {
     id: 'gemini',
     name: 'Google Gemini',
@@ -80,7 +80,7 @@ export function createGeminiProvider({ apiKey, model, timeoutMs }) {
     },
     async discoverModels() {
       if (!apiKey) return []
-      const response = await fetchProvider('gemini', 'https://generativelanguage.googleapis.com/v1beta/models', {
+      const response = await fetchProvider('gemini', `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(apiKey)}`, {
         signal: AbortSignal.timeout(timeoutMs),
         headers: { 'x-goog-api-key': apiKey },
       })

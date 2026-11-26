@@ -17,7 +17,7 @@ export function createOpenAICompatibleProvider({
     capabilities: {
       textGeneration: Boolean(model),
       streaming: Boolean(model) && Boolean(supports.streaming),
-      structuredOutput: false,
+      structuredOutput: Boolean(model) && Boolean(supports.structuredOutput),
       toolCalling: Boolean(model) && Boolean(supports.toolCalling),
       imageUnderstanding: false,
       fileProcessing: false,
@@ -26,7 +26,6 @@ export function createOpenAICompatibleProvider({
     isAvailable: Boolean(baseUrl && apiKey && model),
     async generate({ messages, tools, jsonSchema, signal }) {
       if (!baseUrl || !apiKey || !model) throw new ProviderError(`${name} is not configured.`, { provider: id, status: 503 })
-      if (jsonSchema) throw new ProviderError(`${name} structured output is not enabled for this model configuration.`, { provider: id, status: 501 })
       const response = await fetchProvider(id, `${baseUrl}/chat/completions`, {
         method: 'POST',
         signal: providerRequestSignal(signal, timeoutMs),
@@ -34,6 +33,8 @@ export function createOpenAICompatibleProvider({
         body: JSON.stringify({
           model,
           messages,
+          temperature: 0.3,
+          ...(jsonSchema ? { response_format: { type: 'json_object' } } : {}),
           ...(tools?.length ? { tools, tool_choice: 'auto' } : {}),
         }),
       })

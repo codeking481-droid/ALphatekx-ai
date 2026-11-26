@@ -18,6 +18,7 @@ import { getAvailableSkills, getSkillAllowedTools, matchSkill } from '../skills/
 import { saveAutomaticMemories } from '../memory/auto-save.js'
 import { parseScheduleIntent } from './scheduling.js'
 import { resolveLinkedInPostIntent } from './linkedin-post-intent.js'
+import { formatFallbackTrace } from '../providers/fallback-chain.js'
 
 const SYSTEM_PROMPT = `You are Biz, an AI assistant built for serious work.
 
@@ -189,6 +190,7 @@ export async function processChatRequest({
   })
   let activeProvider = understanding.provider
   let responseModel = understanding.model
+  let fallbackTraces = understanding.fallbackTrace ? [understanding.fallbackTrace] : []
   let planGraph = null
   let executionReport = null
   let reviewSummaries = []
@@ -217,6 +219,7 @@ export async function processChatRequest({
       },
     })
     planGraph = planning.planGraph
+    if (planning.fallbackTrace) fallbackTraces.push(planning.fallbackTrace)
     activeProvider = planning.provider
     responseModel = planning.model
     const workflowContext = {
@@ -336,10 +339,14 @@ export async function processChatRequest({
     )
     activeProvider = completion.provider
     responseModel = completion.result.model || activeProvider.model
+    if (completion.fallbackTrace) fallbackTraces.push(completion.fallbackTrace)
     const evaluation = evaluateProviderResult(completion.result)
     if (!evaluation.accepted) throw new Error('The configured AI provider returned an empty response.')
     reply = completion.result.text.trim()
   }
+
+  const fallbackNotice = [...new Set(fallbackTraces.map(formatFallbackTrace).filter(Boolean))].join('\n')
+  if (fallbackNotice && reply) reply = `${fallbackNotice}\n\n${reply}`
 
   if (jobId) throwIfAborted(signal)
   const client = await database.connect()

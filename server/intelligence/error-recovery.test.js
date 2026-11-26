@@ -44,7 +44,7 @@ test('transient provider failures fall back once and record both attempts', asyn
 
   assert.equal(result.provider.id, 'fallback')
   assert.equal(result.result.text, 'answer')
-  assert.equal(database.calls.length, 2)
+  assert.equal(database.calls.length, 3)
   assert.ok(database.calls.every(([sql, values]) => sql.includes('request_id') && values[1] === 'request-1'))
 })
 

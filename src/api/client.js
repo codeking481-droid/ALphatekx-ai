@@ -16,7 +16,7 @@ async function request(path, options = {}) {
   if (!response.ok) {
     const error = Object.assign(
       new Error(data.error || data.message || 'The request could not be completed.'),
-      { status: response.status },
+      { status: response.status, upstreamStatus: data.upstreamStatus || null },
     )
     throw error
   }
@@ -80,6 +80,13 @@ export const api = {
     }),
     deleteKey: (provider) => request(`/api/settings/keys/${encodeURIComponent(provider)}`, { method: 'DELETE' }),
     plan: () => request('/api/settings/plan'),
+  },
+  providers: {
+    list: () => request('/api/providers'),
+    test: (providerId) => request(`/api/providers/${encodeURIComponent(providerId)}/test`, {
+      method: 'POST',
+      body: {},
+    }),
   },
   chat: (body) => request('/api/chat', { method: 'POST', body }),
   jobs: {

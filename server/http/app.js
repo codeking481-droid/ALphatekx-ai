@@ -275,6 +275,40 @@ app.get('/api/providers', requireUser, (_req, res) => {
   res.json({ providers: providerRegistry.list() })
 })
 
+app.post('/api/providers/:providerId/test', requireUser, async (req, res, next) => {
+  try {
+    const provider = providerRegistry.get(req.params.providerId)
+    if (!provider) return res.status(404).json({ error: 'AI provider was not found.' })
+    if (!provider.isAvailable) return res.status(503).json({
+      provider: provider.id,
+      status: 'failed',
+      error: `${provider.name} is not configured in the server environment.`,
+    })
+    const startedAt = Date.now()
+    try {
+      const result = await provider.generate({
+        messages: [{ role: 'user', content: 'Reply with exactly: connected' }],
+        signal: AbortSignal.timeout(30_000),
+      })
+      res.json({
+        provider: provider.id,
+        status: 'connected',
+        latencyMs: Date.now() - startedAt,
+        model: result.model || provider.model || null,
+      })
+    } catch (error) {
+      res.status(error.status && error.status !== 503 ? error.status : 503).json({
+        provider: provider.id,
+        status: 'failed',
+        upstreamStatus: error.upstreamStatus || null,
+        error: error.message || 'The provider test failed.',
+      })
+    }
+  } catch (error) {
+    next(error)
+  }
+})
+
 app.get('/api/providers/:providerId/models', requireUser, async (req, res, next) => {
   try {
     const models = await providerRegistry.discoverModels(req.params.providerId)

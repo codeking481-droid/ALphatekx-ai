@@ -162,6 +162,22 @@ test('AI worker availability depends only on its URL', () => {
   assert.equal(registry.list().find(({ id }) => id === 'worker2').available, false)
 })
 
+test('OpenRouter and Gemini use their dedicated environment model variables', () => {
+  const registry = createProviderRegistry({
+    OPENROUTER_API_KEY: 'sk-or-v1-1234567890abcd',
+    OPENROUTER_MODEL: 'anthropic/claude-sonnet-4',
+    GEMINI_API_KEY: 'AIzaSy1234567890abcd',
+    GEMINI_MODEL: 'gemini-2.5-flash',
+  })
+  assert.equal(registry.get('openrouter').model, 'anthropic/claude-sonnet-4')
+  assert.equal(registry.get('gemini').model, 'gemini-2.5-flash')
+  const providers = registry.list()
+  assert.equal(providers.find(({ id }) => id === 'openrouter').keySuffix, 'abcd')
+  assert.equal(providers.find(({ id }) => id === 'gemini').keySuffix, 'abcd')
+  assert.equal(JSON.stringify(providers).includes('sk-or-v1'), false)
+  assert.equal(JSON.stringify(providers).includes('AIzaSy'), false)
+})
+
 test('AI worker uses the exact configured URL and requires HTTPS', async () => {
   const registry = createProviderRegistry({ AI_PROVIDER_URL_1: 'https://worker-one.workers.dev/custom/route' })
   const originalFetch = globalThis.fetch

@@ -222,6 +222,7 @@ export async function understandObjective(registry, provider, {
     model: activeCompletion.result.model || activeCompletion.provider.model,
     usage: activeCompletion.result.usage || completion.result.usage || null,
     fallbackUsed: completion.fallbackUsed === true || activeCompletion.fallbackUsed === true,
+    fallbackTrace: activeCompletion.fallbackTrace || completion.fallbackTrace || null,
     objectiveFallback,
   }
 }

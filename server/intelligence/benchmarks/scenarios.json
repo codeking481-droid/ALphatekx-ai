@@ -597,7 +597,7 @@
       "kind": "fallback",
       "metrics": ["recovery_success_rate"],
       "primaryFailure": { "retryable": true },
-      "expect": { "provider": "fallback", "calls": 2, "text": "fallback response" }
+      "expect": { "provider": "fallback", "calls": 3, "text": "fallback response" }
     },
     {
       "id": "recovery-no-retry-nonretryable",

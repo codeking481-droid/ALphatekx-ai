@@ -17,6 +17,7 @@ const compatibleProviders = [
     baseUrl: 'https://openrouter.ai/api/v1',
     key: 'OPENROUTER_API_KEY',
     headers: { 'HTTP-Referer': process.env.WEB_ORIGIN || 'http://localhost:5173', 'X-Title': 'Biz' },
+    supports: { textGeneration: true, streaming: true, toolCalling: true, structuredOutput: true },
   },
 ]
 
@@ -30,9 +31,12 @@ export function createProviderRegistry(env = process.env) {
     providers.set(definition.id, createOpenAICompatibleProvider({
       ...definition,
       apiKey: env[definition.key],
-      model: env[`AI_MODEL_${definition.id.toUpperCase()}`],
+      model: definition.id === 'openrouter'
+        ? env.OPENROUTER_MODEL || env.AI_MODEL_OPENROUTER
+        : env[`AI_MODEL_${definition.id.toUpperCase()}`],
       timeoutMs,
       extraHeaders: definition.headers,
+      supports: definition.supports,
     }))
   }
   for (const definition of [
@@ -54,7 +58,7 @@ export function createProviderRegistry(env = process.env) {
   metrics.set('anthropic', providerMetrics('anthropic', env))
   providers.set('gemini', createGeminiProvider({
     apiKey: env.GEMINI_API_KEY,
-    model: env.AI_MODEL_GEMINI,
+    model: env.GEMINI_MODEL || env.AI_MODEL_GEMINI,
     timeoutMs,
   }))
   metrics.set('gemini', providerMetrics('gemini', env))
@@ -72,7 +76,16 @@ export function createProviderRegistry(env = process.env) {
     },
     list() {
       return [...providers.values()].map(({ id, name, model, capabilities, isAvailable }) => ({
-        id, name, model: model || null, capabilities, available: isAvailable, ...metrics.get(id),
+        id,
+        name,
+        model: model || null,
+        capabilities,
+        available: isAvailable,
+        keySuffix: ['openrouter', 'gemini'].includes(id) && env[id === 'openrouter' ? 'OPENROUTER_API_KEY' : 'GEMINI_API_KEY']?.trim()
+          ? env[id === 'openrouter' ? 'OPENROUTER_API_KEY' : 'GEMINI_API_KEY'].trim().slice(-4)
+          : null,
+        secretSource: ['openrouter', 'gemini'].includes(id) ? 'Set in Cloudflare / .env' : null,
+        ...metrics.get(id),
       }))
     },
     get(id) {

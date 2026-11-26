@@ -28,6 +28,7 @@ export async function createPlanGraph(registry, provider, {
   let result = completion.result
   let activeProvider = completion.provider
   let fallbackUsed = completion.fallbackUsed === true
+  let fallbackTrace = completion.fallbackTrace || null
   let planGraph
   try {
     planGraph = parsePlanGraph(result.text, {
@@ -66,6 +67,7 @@ export async function createPlanGraph(registry, provider, {
     )
     activeProvider = repair.provider
     fallbackUsed ||= repair.fallbackUsed === true
+    fallbackTrace = repair.fallbackTrace || fallbackTrace
     result = repair.result
     try {
       planGraph = parsePlanGraph(result.text, {
@@ -95,6 +97,7 @@ export async function createPlanGraph(registry, provider, {
     model: result.model || activeProvider.model,
     usage: result.usage || completion.result.usage || null,
     fallbackUsed,
+    fallbackTrace,
   }
 }
 
