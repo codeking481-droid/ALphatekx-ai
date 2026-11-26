@@ -119,7 +119,7 @@ export default function Skills() {
     <div className="mx-auto w-full max-w-4xl px-5 py-8 sm:px-8 sm:py-12">
       <header className="mb-7 flex flex-wrap items-center justify-between gap-4">
         <div className="flex items-center gap-3">
-          <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10 text-primary">
+          <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/[0.15] text-primary">
             <Sparkles className="h-5 w-5" strokeWidth={1.8} />
           </span>
           <div>

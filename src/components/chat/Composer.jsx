@@ -181,7 +181,7 @@ export default function Composer({ value, onChange, onSend, onVoice, sending }) 
     <div>
       <div
         className={cn(
-          "rounded-[28px] border border-border bg-secondary px-3 pb-3 pt-3 shadow-[0_8px_32px_-18px_hsl(var(--foreground)/0.18)] backdrop-blur-xl transition-colors",
+          "rounded-[28px] border border-[#234534] bg-secondary px-3 pb-3 pt-3 shadow-[0_8px_32px_-18px_hsl(var(--foreground)/0.18)] backdrop-blur-xl transition-colors",
           "focus-within:border-primary/40 focus-within:bg-secondary",
           listening && "border-primary/40"
         )}
@@ -241,7 +241,7 @@ export default function Composer({ value, onChange, onSend, onVoice, sending }) 
             title="Dictate a message"
             className={cn(
               iconButton,
-              listening && "bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary"
+              listening && "bg-primary/[0.15] text-primary hover:bg-primary/20 hover:text-primary"
             )}
           >
             {listening ? (
@@ -267,9 +267,9 @@ export default function Composer({ value, onChange, onSend, onVoice, sending }) 
               onClick={previewLinkedInPost}
               disabled={!value.trim() || sending || linkedinBusy}
               title="Preview a LinkedIn post"
-              className="inline-flex h-10 items-center gap-1 rounded-full px-2 text-[11px] text-[#0A66C2] transition-colors hover:bg-accent disabled:opacity-40 sm:px-2.5"
+              className="inline-flex h-10 items-center gap-2 rounded-full border border-primary/70 px-3 text-xs font-semibold text-primary transition-colors hover:bg-primary/[0.15] disabled:opacity-40"
             >
-              {linkedinBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Linkedin className="h-3.5 w-3.5 text-[#0A66C2]" />}
+              {linkedinBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Linkedin className="h-4 w-4 text-[#0A66C2]" />}
               <span>Post to LinkedIn</span>
             </button>
           )}
@@ -283,7 +283,7 @@ export default function Composer({ value, onChange, onSend, onVoice, sending }) 
             className={cn(
               "ml-auto flex h-11 w-11 items-center justify-center rounded-full transition-all",
               canSend
-                ? "bg-primary text-primary-foreground hover:opacity-90"
+                ? "bg-primary text-white hover:opacity-90"
                 : "bg-muted text-muted-foreground/50"
             )}
           >
@@ -297,7 +297,7 @@ export default function Composer({ value, onChange, onSend, onVoice, sending }) 
       </div>
 
       {linkedinPreview && (
-        <div className="mt-3 rounded-xl border border-border/70 bg-card/80 p-3">
+        <div className="mt-3 rounded-[20px] border border-[#1E2B22] bg-card p-4">
           <p className="text-xs font-medium">LinkedIn post preview</p>
           <p className="mt-2 whitespace-pre-wrap break-words text-sm text-foreground/90">{linkedinPreview}</p>
           <div className="mt-3 flex flex-wrap gap-2">
@@ -305,7 +305,7 @@ export default function Composer({ value, onChange, onSend, onVoice, sending }) 
               type="button"
               disabled={linkedinBusy || !linkedinApprovalId}
               onClick={approveLinkedInPost}
-              className="rounded-lg bg-primary px-3 py-2 text-xs font-medium text-primary-foreground disabled:opacity-50"
+              className="rounded-xl bg-primary px-3 py-2 text-xs font-semibold text-white disabled:opacity-50"
             >
               {linkedinBusy ? "Publishing…" : "Approve & post"}
             </button>
@@ -316,7 +316,7 @@ export default function Composer({ value, onChange, onSend, onVoice, sending }) 
                 setLinkedinPreview("");
                 setLinkedinApprovalId("");
               }}
-              className="rounded-lg border border-border px-3 py-2 text-xs font-medium text-muted-foreground hover:bg-accent disabled:opacity-50"
+              className="rounded-xl border border-[#1E2B22] px-3 py-2 text-xs font-medium text-muted-foreground hover:bg-accent disabled:opacity-50"
             >
               Cancel
             </button>

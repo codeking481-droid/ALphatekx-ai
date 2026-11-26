@@ -61,12 +61,12 @@ export default function SidebarNav({ onNavigate }) {
               className={cn(
                 "flex items-center gap-3 rounded-[10px] px-3 py-3 text-[15px] transition-colors",
                 active
-                  ? "bg-accent text-foreground"
+                  ? "relative bg-primary/[0.15] text-primary before:absolute before:inset-y-2 before:left-0 before:w-1 before:rounded-full before:bg-primary"
                   : "text-muted-foreground hover:bg-accent/60 hover:text-foreground"
               )}
             >
               <Icon
-                className={cn("h-4 w-4", active ? "text-foreground" : "text-muted-foreground")}
+                className={cn("h-4 w-4", active ? "text-primary" : "text-muted-foreground")}
                 strokeWidth={1.7}
               />
               {label}
@@ -77,7 +77,7 @@ export default function SidebarNav({ onNavigate }) {
 
       <div className="mt-auto border-t border-border/60 px-1 pt-3.5">
         <div className="flex items-center gap-2.5 rounded-lg px-1.5 py-1">
-          <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary/10 text-[10.5px] font-semibold text-primary ring-1 ring-inset ring-primary/15">
+          <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary/[0.15] text-[10.5px] font-semibold text-primary ring-1 ring-inset ring-primary/15">
             {initials(user?.full_name)}
           </span>
           <span className="min-w-0">

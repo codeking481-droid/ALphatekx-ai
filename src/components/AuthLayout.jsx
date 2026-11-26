@@ -22,7 +22,7 @@ export default function AuthLayout({ icon: Icon, title, subtitle, footer, childr
         <section className="rounded-2xl border border-border/80 bg-card p-6 shadow-sm sm:p-8">
           <div className="mb-6 text-center">
             {Icon && (
-              <span className="mx-auto mb-4 flex h-10 w-10 items-center justify-center rounded-full bg-primary/10 text-primary">
+              <span className="mx-auto mb-4 flex h-10 w-10 items-center justify-center rounded-full bg-primary/[0.15] text-primary">
                 <Icon className="h-5 w-5" strokeWidth={1.8} />
               </span>
             )}

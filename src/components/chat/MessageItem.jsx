@@ -54,7 +54,7 @@ export default function MessageItem({ message }) {
             </div>
           )}
           {message.content && (
-            <div className="whitespace-pre-wrap rounded-2xl rounded-br-md border border-border/60 bg-secondary px-3.5 py-2.5 text-[16px] leading-[1.6] text-foreground sm:px-4">
+            <div className="whitespace-pre-wrap rounded-2xl rounded-br-md border border-[#234534] bg-[#1C2A23] px-3.5 py-2.5 text-[16px] leading-[1.6] text-foreground sm:px-4">
               {message.content}
             </div>
           )}

@@ -46,7 +46,7 @@ export default function TopBar({ onMenu }) {
         <Link
           to="/settings"
           aria-label="Account settings"
-          className="flex h-9 w-9 items-center justify-center rounded-full bg-primary/10 text-[11px] font-semibold text-primary ring-1 ring-inset ring-primary/20 transition-colors hover:bg-primary/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="flex h-9 w-9 items-center justify-center rounded-full bg-primary/[0.15] text-[11px] font-semibold text-primary ring-1 ring-inset ring-primary/15 transition-colors hover:bg-primary/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           {initials(user?.full_name)}
         </Link>

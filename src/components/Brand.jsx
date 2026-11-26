@@ -9,13 +9,25 @@ export function BrandMark({ className = "h-7 w-7" }) {
       aria-hidden="true"
       className={cn("text-primary", className)}
     >
-      <path
-        d="M7.5 4.5h4.8a3.6 3.6 0 0 1 0 7.2H7.5zm0 7.2h5.4a3.9 3.9 0 0 1 0 7.8H7.5z"
+      <circle
+        cx="12"
+        cy="12"
+        r="10.4"
+        fill="#0A0F0C"
         stroke="currentColor"
-        strokeWidth="1.9"
-        strokeLinecap="round"
+        strokeWidth="1.4"
+      />
+      <path
+        d="M7.2 5.6h5.1a3.1 3.1 0 0 1 0 6.2H7.2zm0 6.2h5.6a3.3 3.3 0 0 1 0 6.6H7.2z"
+        stroke="currentColor"
+        strokeWidth="1.7"
         strokeLinejoin="round"
       />
+      <path
+        d="M15.2 7.1c.1-1.6 1.1-2.7 2.8-2.9-.1 1.7-1.1 2.7-2.8 2.9Z"
+        fill="currentColor"
+      />
+      <path d="m15.2 7.1 2.3-2.3" stroke="currentColor" strokeWidth="1.1" />
     </svg>
   );
 }
