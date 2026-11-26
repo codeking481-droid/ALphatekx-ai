@@ -5,11 +5,11 @@ import { config } from '../config.js'
 import { getTool, listTools } from '../tools/registry.js'
 import { log } from '../observability/logger.js'
 
-export const MAX_SKILL_BYTES = 32 * 1024
+export const MAX_SKILL_BYTES = 256 * 1024
 const VALID_PERMISSIONS = new Set(['tool:read', 'tool:approved'])
 const DANGEROUS_TOOLS = new Set(['file_write', 'skill_create', 'run_code', 'shell'])
 const BUILTIN_TOOL_IDS = new Set(['web_search', 'file_read', 'file_list', 'file_write'])
-const REQUIRED_SECTIONS = ['when to use', 'steps', 'examples', 'what not to do']
+const DEFAULT_SKILL_TOOL_IDS = new Set(['web_search', 'file_read', 'file_list'])
 
 export function parseSkillMarkdown(markdown) {
   try {
@@ -36,14 +36,14 @@ function parseSkillMarkdownContent(markdown) {
   if (typeof name !== 'string' || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(name) || name.length > 64) {
     throw new Error('Skill name must be a lowercase hyphenated slug.')
   }
-  if (typeof description !== 'string' || description.trim().length < 12 || description.length > 300) {
-    throw new Error('Skill description must be between 12 and 300 characters.')
+  if (typeof description !== 'string' || !description.trim() || description.length > 300) {
+    throw new Error('Skill description must be non-empty and no longer than 300 characters.')
   }
   if (typeof version !== 'string' || !/^\d+\.\d+\.\d+(?:-[a-z0-9.-]+)?$/i.test(version)) {
     throw new Error('Skill version must use semantic version format, such as 1.0.0.')
   }
-  if (!Array.isArray(tools) || tools.length < 1 || tools.length > 12 || new Set(tools).size !== tools.length) {
-    throw new Error('Skill tools must list between 1 and 12 unique registered tool IDs.')
+  if (!Array.isArray(tools) || tools.length > 12 || new Set(tools).size !== tools.length) {
+    throw new Error('Skill tools must list no more than 12 unique registered tool IDs.')
   }
   for (const id of tools) {
     if (typeof id !== 'string' || !getTool(id)) {
@@ -61,10 +61,6 @@ function parseSkillMarkdownContent(markdown) {
   }
 
   const body = match[2].trim()
-  if (Buffer.byteLength(body, 'utf8') < 40 ||
-    REQUIRED_SECTIONS.some((section) => !new RegExp(`^#{1,3}\\s+${section}\\s*$`, 'im').test(body))) {
-    throw new Error('Skill body must include When to use, Steps, Examples, and What not to do sections.')
-  }
   return {
     name,
     description: description.trim(),
@@ -75,6 +71,143 @@ function parseSkillMarkdownContent(markdown) {
     markdown,
     dangerous: tools.some((id) => DANGEROUS_TOOLS.has(id)),
   }
+}
+
+export function normalizeSkillUpload(markdown, fallbackName = 'uploaded-skill') {
+  if (typeof markdown !== 'string' || Buffer.byteLength(markdown, 'utf8') > MAX_SKILL_BYTES) {
+    throw Object.assign(new Error(`SKILL.md must be UTF-8 text no larger than ${MAX_SKILL_BYTES} bytes.`), { status: 413 })
+  }
+
+  const source = markdown.replace(/^\uFEFF/, '')
+  const frontmatterMatch = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(source)
+  let frontmatter = {}
+  if (frontmatterMatch) {
+    try {
+      frontmatter = parseUploadFrontmatter(frontmatterMatch[1])
+    } catch {
+      frontmatter = {}
+    }
+  }
+
+  const body = extractUploadBody(source, frontmatterMatch)
+  const name = skillSlug(frontmatter.name) || skillSlug(fallbackName) || 'uploaded-skill'
+  const description = normalizeDescription(frontmatter.description, body, name)
+  const version = typeof frontmatter.version === 'string' &&
+    /^\d+\.\d+\.\d+(?:-[a-z0-9.-]+)?$/i.test(frontmatter.version)
+    ? frontmatter.version
+    : '1.0.0'
+  const tools = normalizeUploadTools(frontmatter.tools)
+  const permissions = [...new Set(tools.flatMap((id) => getTool(id).permissions))]
+  const instructions = body || "Use this skill when it is relevant to the user's request."
+  const yaml = [
+    `name: ${name}`,
+    `description: ${JSON.stringify(description)}`,
+    `version: ${version}`,
+    'permissions:',
+    ...permissions.map((permission) => `  - ${permission}`),
+    'tools:',
+    ...tools.map((id) => `  - ${id}`),
+  ].join('\n')
+
+  return `---\n${yaml}\n---\n\n${instructions}\n`
+}
+
+function parseUploadFrontmatter(source) {
+  const result = {}
+  const lines = source.split(/\r?\n/)
+  for (let index = 0; index < lines.length; index += 1) {
+    const rawLine = lines[index]
+    if (!rawLine.trim() || rawLine.trimStart().startsWith('#') || /^\s/.test(rawLine)) continue
+    const field = /^([A-Za-z][A-Za-z0-9_-]*):(?:[ \t]*(.*))?$/.exec(rawLine)
+    if (!field) throw new Error('Malformed frontmatter.')
+    const key = field[1].toLowerCase()
+    let value = field[2] || ''
+    if (key === 'description' && /^[>|][+-]?$/.test(value.trim())) {
+      const style = value.trim()[0]
+      const block = []
+      while (index + 1 < lines.length && /^\s+/.test(lines[index + 1])) {
+        block.push(lines[++index].trim())
+      }
+      value = style === '>' ? block.join(' ') : block.join('\n')
+      result[key] = value
+    } else if (['tools', 'permissions'].includes(key)) {
+      const values = []
+      if (!value.trim()) {
+        while (index + 1 < lines.length) {
+          const item = /^\s+-\s*(.*?)\s*$/.exec(lines[index + 1])
+          if (!item) break
+          values.push(parseUploadScalar(item[1]))
+          index += 1
+        }
+      } else {
+        const inline = /^\[(.*)\]$/.exec(value.trim())
+        values.push(...(inline ? inline[1].split(',') : value.split(','))
+          .map((item) => parseUploadScalar(item.trim())))
+      }
+      result[key] = values
+    } else if (['name', 'description', 'version'].includes(key)) {
+      result[key] = parseUploadScalar(value.trim())
+    }
+  }
+  return result
+}
+
+function parseUploadScalar(value) {
+  if (value.startsWith('"') && value.endsWith('"')) {
+    try {
+      return JSON.parse(value)
+    } catch {
+      return value.slice(1, -1)
+    }
+  }
+  if (value.startsWith("'") && value.endsWith("'")) return value.slice(1, -1).replace(/''/g, "'")
+  return value.trim()
+}
+
+function extractUploadBody(source, frontmatterMatch) {
+  if (frontmatterMatch) return source.slice(frontmatterMatch[0].length).trim()
+  const lines = source.split(/\r?\n/)
+  if (lines[0]?.trim() === '---') {
+    const closing = lines.findIndex((line, index) => index > 0 && line.trim() === '---')
+    if (closing >= 0) return lines.slice(closing + 1).join('\n').trim()
+    const separator = lines.findIndex((line, index) => index > 0 && !line.trim())
+    return (separator >= 0 ? lines.slice(separator + 1) : lines.slice(1)).join('\n').trim()
+  }
+  return source.trim()
+}
+
+function normalizeDescription(value, body, name) {
+  const candidate = typeof value === 'string' ? value.trim() : ''
+  if (candidate) return candidate.slice(0, 300)
+  const firstLine = body.split(/\r?\n/).map((line) => line.trim()).find(Boolean) || ''
+  const fromBody = firstLine.replace(/^#{1,6}\s*/, '').slice(0, 300)
+  return fromBody || `Uploaded guidance for ${name.replace(/-/g, ' ')}.`
+}
+
+function normalizeUploadTools(value) {
+  const requested = Array.isArray(value) ? value : []
+  const usable = [...new Set(requested
+    .filter((id) => typeof id === 'string')
+    .map((id) => id.trim())
+    .filter((id) => {
+      const tool = getTool(id)
+      return tool && tool.permissions.every((permission) => VALID_PERMISSIONS.has(permission))
+    }))]
+  const defaults = listTools()
+    .filter(({ id }) => DEFAULT_SKILL_TOOL_IDS.has(id))
+    .map(({ id }) => id)
+  return (usable.length ? usable : defaults).slice(0, 12)
+}
+
+function skillSlug(value) {
+  if (typeof value !== 'string') return ''
+  return value.normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 64)
+    .replace(/-+$/g, '')
 }
 
 export function parseFrontmatter(source) {
@@ -124,7 +257,8 @@ export function getUserSkillsDirectory(userId, skillsDir = config.skillsDir) {
 }
 
 export function getSkillAllowedTools(skill, fallback = false) {
-  if (skill) return [...skill.tools]
+  if (skill?.tools?.length) return [...skill.tools]
+  if (skill) return listTools().filter(({ id }) => DEFAULT_SKILL_TOOL_IDS.has(id)).map(({ id }) => id)
   return fallback ? listTools().filter(({ id }) => BUILTIN_TOOL_IDS.has(id)).map(({ id }) => id) : []
 }
 
@@ -149,10 +283,11 @@ export async function getAvailableSkills({ userId, database, skillsDir = config.
   if (await existingSafeDirectory(usersDirectory)) await existingSafeDirectory(personalRoot)
   const personal = await scanDirectory(personalRoot, { skillsDir, missingOk: true })
   const { rows } = await database.query(
-    'SELECT name, enabled FROM user_skills WHERE user_id = $1',
+    'SELECT name, enabled, source FROM user_skills WHERE user_id = $1',
     [userId],
   )
   const enabledByName = new Map(rows.map((row) => [row.name, row.enabled]))
+  const sourceByName = new Map(rows.map((row) => [row.name, row.source]))
   const skills = []
   for (const skill of bundled.skills) {
     const builtin = skill.name === 'create-skill'
@@ -161,6 +296,7 @@ export async function getAvailableSkills({ userId, database, skillsDir = config.
       ...skill,
       builtin,
       bundled: !builtin,
+      source: 'Biz',
       enabled: builtin || (enabledByName.has(skill.name)
         ? enabledByName.get(skill.name) === true
         : enabledByDefault),
@@ -176,6 +312,7 @@ export async function getAvailableSkills({ userId, database, skillsDir = config.
       ...skill,
       builtin: false,
       bundled: false,
+      source: sourceByName.get(skill.name) === 'biz' ? 'Biz' : 'Uploaded',
       enabled: enabledByName.get(skill.name) === true,
     })
   }

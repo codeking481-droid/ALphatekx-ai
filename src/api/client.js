@@ -95,9 +95,13 @@ export const api = {
   },
   skills: {
     list: () => request('/api/skills'),
-    install: (file) => {
+    /** @param {File} file @param {{ fallbackName?: string, ignoredFiles?: string[] }} [options] */
+    install: (file, options = {}) => {
+      const { fallbackName, ignoredFiles } = options
       const body = new FormData()
       body.append('skill', file)
+      if (fallbackName) body.append('skill_name', fallbackName)
+      if (ignoredFiles?.length) body.append('ignored_files', JSON.stringify(ignoredFiles.slice(0, 20)))
       return request('/api/skills/install', { method: 'POST', body })
     },
     setEnabled: (name, enabled) => request(`/api/skills/${encodeURIComponent(name)}`, {

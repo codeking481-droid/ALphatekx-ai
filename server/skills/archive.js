@@ -1,35 +1,61 @@
 import { inflateRawSync } from 'node:zlib'
 import { MAX_SKILL_BYTES } from './loader.js'
 
-const ZIP_LIMIT = MAX_SKILL_BYTES * 2
+export const MAX_SKILL_UPLOAD_BYTES = 8 * 1024 * 1024
+const MAX_ZIP_ENTRIES = 1024
 
-export function extractSkillMarkdown(file) {
-  if (!file || !Buffer.isBuffer(file.buffer) || file.buffer.length > ZIP_LIMIT) {
-    throw Object.assign(new Error('Upload must be no larger than 64 KiB.'), { status: 413 })
+export function extractSkillUpload(file) {
+  if (!file || !Buffer.isBuffer(file.buffer)) {
+    throw Object.assign(new Error('Choose a SKILL.md file or a ZIP containing SKILL.md.'), { status: 400 })
   }
+  if (file.buffer.length > MAX_SKILL_UPLOAD_BYTES) {
+    throw Object.assign(new Error('Skill uploads must be 8 MiB or smaller.'), { status: 413 })
+  }
+
   const name = String(file.originalname || '').toLowerCase()
   if (name.endsWith('.md')) {
     if (file.buffer.length > MAX_SKILL_BYTES) {
       throw Object.assign(new Error(`SKILL.md must be ${MAX_SKILL_BYTES} bytes or smaller.`), { status: 413 })
     }
-    return decodeMarkdown(file.buffer)
+    return {
+      markdown: decodeMarkdown(file.buffer),
+      fallbackName: pathBase(file.originalname).replace(/\.md$/i, ''),
+      ignoredFiles: [],
+      ignoredFileCount: 0,
+    }
   }
   if (!name.endsWith('.zip')) {
-    throw Object.assign(new Error('Upload one SKILL.md file or a ZIP containing only SKILL.md.'), { status: 400 })
+    throw Object.assign(new Error('Upload a .md file or a ZIP containing SKILL.md.'), { status: 400 })
   }
-  return decodeMarkdown(extractSingleSkillEntry(file.buffer))
+  const extracted = extractSkillEntry(file.buffer)
+  return {
+    markdown: decodeMarkdown(extracted.content),
+    fallbackName: extracted.fallbackName || pathBase(file.originalname).replace(/\.zip$/i, ''),
+    ignoredFiles: extracted.ignoredFiles,
+    ignoredFileCount: extracted.ignoredFileCount,
+  }
 }
 
-function extractSingleSkillEntry(buffer) {
+export function extractSkillMarkdown(file) {
+  return extractSkillUpload(file).markdown
+}
+
+function extractSkillEntry(buffer) {
   const end = findEndRecord(buffer)
   if (end < 0) throw invalidArchive()
+  const diskNumber = buffer.readUInt16LE(end + 4)
+  const directoryDisk = buffer.readUInt16LE(end + 6)
+  const diskEntries = buffer.readUInt16LE(end + 8)
   const entries = buffer.readUInt16LE(end + 10)
   const directorySize = buffer.readUInt32LE(end + 12)
   const directoryOffset = buffer.readUInt32LE(end + 16)
-  if (entries < 1 || entries > 2 || directoryOffset + directorySize > end) throw invalidArchive()
+  if (diskNumber !== 0 || directoryDisk !== 0 || diskEntries !== entries ||
+    entries < 1 || entries > MAX_ZIP_ENTRIES ||
+    directoryOffset + directorySize !== end) throw invalidArchive()
 
   let cursor = directoryOffset
-  let skillEntry = null
+  const skillEntries = []
+  const ignoredFiles = []
   for (let index = 0; index < entries; index += 1) {
     if (cursor + 46 > buffer.length || buffer.readUInt32LE(cursor) !== 0x02014b50) throw invalidArchive()
     const flags = buffer.readUInt16LE(cursor + 8)
@@ -43,33 +69,61 @@ function extractSingleSkillEntry(buffer) {
     const externalAttributes = buffer.readUInt32LE(cursor + 38)
     const localOffset = buffer.readUInt32LE(cursor + 42)
     const recordEnd = cursor + 46 + nameLength + extraLength + commentLength
-    if (recordEnd > buffer.length || flags & 1 || compressedSize > ZIP_LIMIT || uncompressedSize > MAX_SKILL_BYTES) {
-      throw invalidArchive()
-    }
+    if (recordEnd > buffer.length || (flags & 1) !== 0 || !nameLength || nameLength > 1024) throw invalidArchive()
     const entryName = decodeEntryName(buffer.subarray(cursor + 46, cursor + 46 + nameLength))
-    const mode = (externalAttributes >>> 16) & 0xffff
-    if (mode && (mode & 0o170000) === 0o120000) throw invalidArchive()
+    if (entryName.includes('\0')) throw invalidArchive()
     if (entryName.endsWith('/')) {
-      if (entries !== 2 || !/^[a-z0-9][a-z0-9-]{0,63}\/$/.test(entryName)) throw invalidArchive()
+      cursor = recordEnd
+      continue
+    }
+    if (pathBase(entryName).toLowerCase() === 'skill.md') {
+      if (entryName.startsWith('/') || entryName.includes('\\') ||
+        entryName.split('/').some((part) => part === '..' || part === '.')) {
+        throw invalidArchive()
+      }
+      const mode = (externalAttributes >>> 16) & 0xffff
+      if (mode && (mode & 0o170000) === 0o120000) throw invalidArchive()
+      skillEntries.push({
+        flags,
+        method,
+        checksum,
+        compressedSize,
+        uncompressedSize,
+        localOffset,
+        entryName,
+        fallbackName: entryName.includes('/')
+          ? entryName.split('/').filter(Boolean).slice(-2, -1)[0]
+          : '',
+      })
     } else {
-      if (!/^(?:[a-z0-9][a-z0-9-]{0,63}\/)?SKILL\.md$/i.test(entryName) || skillEntry) throw invalidArchive()
-      skillEntry = { flags, method, checksum, compressedSize, uncompressedSize, localOffset, entryName }
+      ignoredFiles.push(entryName)
     }
     cursor = recordEnd
   }
-  if (cursor !== directoryOffset + directorySize || !skillEntry || ![0, 8].includes(skillEntry.method)) {
-    throw invalidArchive()
+  if (cursor !== directoryOffset + directorySize) throw invalidArchive()
+  if (skillEntries.length === 0) {
+    throw Object.assign(
+      new Error('No SKILL.md found in ZIP. ZIP must contain SKILL.md at its root or inside a folder.'),
+      { status: 400 },
+    )
+  }
+  if (skillEntries.length > 1) {
+    throw Object.assign(new Error('ZIP contains multiple SKILL.md files. Keep only the skill you want to install.'), { status: 400 })
+  }
+  const skillEntry = skillEntries[0]
+  if (skillEntry.uncompressedSize > MAX_SKILL_BYTES || ![0, 8].includes(skillEntry.method)) {
+    throw Object.assign(new Error(`SKILL.md must be ${MAX_SKILL_BYTES} bytes or smaller and use standard ZIP compression.`), { status: 400 })
   }
   const { localOffset, entryName, method, compressedSize, uncompressedSize, checksum } = skillEntry
-  if (localOffset + 30 > buffer.length || buffer.readUInt32LE(localOffset) !== 0x04034b50) throw invalidArchive()
+  if (localOffset + 30 > directoryOffset || buffer.readUInt32LE(localOffset) !== 0x04034b50) throw invalidArchive()
   const localFlags = buffer.readUInt16LE(localOffset + 6)
   const localMethod = buffer.readUInt16LE(localOffset + 8)
   const localNameLength = buffer.readUInt16LE(localOffset + 26)
   const localExtraLength = buffer.readUInt16LE(localOffset + 28)
   const localName = decodeEntryName(buffer.subarray(localOffset + 30, localOffset + 30 + localNameLength))
   const dataOffset = localOffset + 30 + localNameLength + localExtraLength
-  if (localFlags & 1 || localMethod !== method || localName !== entryName ||
-    dataOffset + compressedSize > buffer.length) throw invalidArchive()
+  if ((localFlags & 1) !== 0 || localMethod !== method || localName !== entryName ||
+    dataOffset + compressedSize > directoryOffset) throw invalidArchive()
 
   const compressed = buffer.subarray(dataOffset, dataOffset + compressedSize)
   let content
@@ -78,10 +132,15 @@ function extractSingleSkillEntry(buffer) {
       ? compressed
       : inflateRawSync(compressed, { maxOutputLength: MAX_SKILL_BYTES })
   } catch {
-    throw invalidArchive()
+    throw Object.assign(new Error('SKILL.md could not be decompressed from the ZIP.'), { status: 400 })
   }
   if (content.length !== uncompressedSize || crc32(content) !== checksum) throw invalidArchive()
-  return content
+  return {
+    content,
+    fallbackName: skillEntry.fallbackName,
+    ignoredFiles: ignoredFiles.slice(0, 20),
+    ignoredFileCount: ignoredFiles.length,
+  }
 }
 
 function findEndRecord(buffer) {
@@ -111,6 +170,10 @@ function decodeEntryName(buffer) {
   }
 }
 
+function pathBase(value) {
+  return String(value || '').split(/[\\/]/).filter(Boolean).at(-1) || ''
+}
+
 function crc32(buffer) {
   let crc = 0xffffffff
   for (const byte of buffer) {
@@ -122,7 +185,7 @@ function crc32(buffer) {
 
 function invalidArchive() {
   return Object.assign(
-    new Error('ZIP must contain exactly one SKILL.md file and optionally its single skill folder; code and other files are not allowed.'),
+    new Error('ZIP could not be read. Upload a valid ZIP containing one SKILL.md file.'),
     { status: 400 },
   )
 }

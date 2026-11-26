@@ -28,7 +28,8 @@ import { getTool, parseApprovalDescription } from '../tools/registry.js'
 import { registerWebSearchTool } from '../tools/web-search.js'
 import { registerFileTools } from '../tools/file-tools.js'
 import { registerSkillCreateTool } from '../skills/skill-create.js'
-import { extractSkillMarkdown } from '../skills/archive.js'
+import { extractSkillUpload, MAX_SKILL_UPLOAD_BYTES } from '../skills/archive.js'
+import { normalizeSkillUpload } from '../skills/loader.js'
 import { createCorsMiddleware } from './cors.js'
 import {
   decideSkillApproval,
@@ -68,7 +69,10 @@ import {
 
 const app = express()
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_FILE_BYTES, files: 1 } })
-const skillUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 64 * 1024, files: 1 } })
+const skillUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: MAX_SKILL_UPLOAD_BYTES, files: 1, fields: 2, fieldSize: 4096 },
+})
 const chatRateLimit = createRateLimiter({ limit: 10, windowMs: 60_000 })
 registerWebSearchTool()
 registerLinkedInTools()
@@ -761,9 +765,20 @@ app.get('/api/skills', requireUser, async (req, res, next) => {
 app.post('/api/skills/install', requireUser, skillUpload.single('skill'), async (req, res, next) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'Upload a SKILL.md file or a ZIP containing one.' })
-    const markdown = extractSkillMarkdown(req.file)
-    const result = await installSkill({ userId: req.user.id, markdown, database: pool })
-    res.status(result.status === 'pending_approval' ? 202 : result.status === 'installed' ? 201 : 200).json(result)
+    const extracted = extractSkillUpload(req.file)
+    const fallbackName = typeof req.body.skill_name === 'string' ? req.body.skill_name : extracted.fallbackName
+    const markdown = normalizeSkillUpload(extracted.markdown, fallbackName)
+    const extraFiles = parseIgnoredSkillFiles(req.body.ignored_files)
+    const ignoredFiles = [...extracted.ignoredFiles, ...extraFiles].slice(0, 20)
+    const ignoredFileCount = extracted.ignoredFileCount + extraFiles.length
+    const warnings = ignoredFileCount
+      ? [`Ignored unknown files: ${ignoredFiles.join(', ')}${ignoredFileCount > ignoredFiles.length ? ` and ${ignoredFileCount - ignoredFiles.length} more` : ''}`]
+      : []
+    const result = await installSkill({ userId: req.user.id, markdown, database: pool, source: 'upload' })
+    res.status(result.status === 'pending_approval' ? 202 : result.status === 'installed' ? 201 : 200).json({
+      ...result,
+      warnings,
+    })
   } catch (error) {
     next(error)
   }
@@ -898,7 +913,9 @@ app.post('/api/approvals/:approvalId', requireUser, requireObjectBody, async (re
 
 app.use((error, _req, res, _next) => {
   if (error instanceof multer.MulterError) {
-    const fileLimit = _req.path.startsWith('/api/skills') ? '64 KiB' : `${MAX_FILE_BYTES / (1024 * 1024)} MB`
+    const fileLimit = _req.path.startsWith('/api/skills')
+      ? `${MAX_SKILL_UPLOAD_BYTES / (1024 * 1024)} MiB`
+      : `${MAX_FILE_BYTES / (1024 * 1024)} MB`
     return res.status(error.code === 'LIMIT_FILE_SIZE' ? 413 : 400).json({
       error: error.code === 'LIMIT_FILE_SIZE' ? `Files must be ${fileLimit} or smaller.` : 'The upload was invalid.',
       requestId: _req.requestId,
@@ -948,6 +965,21 @@ function requireObjectBody(req, res, next) {
 function parseStoredObject(value) {
   const parsed = typeof value === 'string' ? JSON.parse(value) : value
   return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null
+}
+
+function parseIgnoredSkillFiles(value) {
+  if (value === undefined) return []
+  let files
+  try {
+    files = JSON.parse(value)
+  } catch {
+    throw Object.assign(new Error('Folder upload metadata is invalid. Please select the folder again.'), { status: 400 })
+  }
+  if (!Array.isArray(files) || files.length > 20 ||
+    files.some((file) => typeof file !== 'string' || file.length > 512)) {
+    throw Object.assign(new Error('Folder upload metadata is invalid. Please select the folder again.'), { status: 400 })
+  }
+  return files.map((file) => file.replace(/[\u0000-\u001f]/g, '').slice(0, 200))
 }
 
 export default app

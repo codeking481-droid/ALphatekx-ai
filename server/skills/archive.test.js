@@ -1,23 +1,68 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { deflateRawSync } from 'node:zlib'
-import { extractSkillMarkdown } from './archive.js'
+import { extractSkillMarkdown, extractSkillUpload } from './archive.js'
 
-test('skill uploads accept a single SKILL.md from a ZIP and reject extra files', () => {
+test('skill uploads accept a single Markdown file and derive a fallback name', () => {
   const markdown = Buffer.from('---\nname: sample\n---\nbody')
-  const archive = makeZip([{ name: 'sample/SKILL.md', content: markdown }])
-  assert.equal(extractSkillMarkdown({ originalname: 'sample.zip', buffer: archive }), markdown.toString())
+  const result = extractSkillUpload({ originalname: 'My Skill.md', buffer: markdown })
+  assert.equal(result.markdown, markdown.toString())
+  assert.equal(result.fallbackName, 'My Skill')
+  assert.deepEqual(result.ignoredFiles, [])
+  assert.equal(result.ignoredFileCount, 0)
+})
 
-  const unsafe = makeZip([
-    { name: 'sample/SKILL.md', content: markdown },
-    { name: 'sample/evil.js', content: Buffer.from('ignored') },
+test('Claude-style ZIPs accept supporting files and report them as ignored', () => {
+  const markdown = Buffer.from('---\nname: sample\n---\nbody')
+  const archive = makeZip([
+    { name: 'claude-skill/SKILL.md', content: markdown },
+    { name: 'claude-skill/scripts/setup.py', content: Buffer.from('print("ignored")') },
+    { name: 'claude-skill/references/guide.md', content: Buffer.from('ignored reference') },
   ])
-  assert.throws(() => extractSkillMarkdown({ originalname: 'sample.zip', buffer: unsafe }), /SKILL\.md/)
+  const result = extractSkillUpload({ originalname: 'claude-skill.zip', buffer: archive })
+  assert.equal(result.markdown, markdown.toString())
+  assert.equal(result.fallbackName, 'claude-skill')
+  assert.deepEqual(result.ignoredFiles, [
+    'claude-skill/scripts/setup.py',
+    'claude-skill/references/guide.md',
+  ])
+  assert.equal(result.ignoredFileCount, 2)
+})
+
+test('ZIP uploads locate SKILL.md nested in multiple folders', () => {
+  const markdown = Buffer.from('---\nname: nested\n---\nbody')
+  const archive = makeZip([{ name: 'claude-export/skills/nested/SKILL.md', content: markdown }])
+  const result = extractSkillUpload({ originalname: 'export.zip', buffer: archive })
+  assert.equal(result.markdown, markdown.toString())
+  assert.equal(result.fallbackName, 'nested')
+})
+
+test('ZIP uploads report missing and ambiguous SKILL.md files clearly', () => {
+  const noSkill = makeZip([{ name: 'README.md', content: Buffer.from('no skill') }])
+  assert.throws(
+    () => extractSkillMarkdown({ originalname: 'missing.zip', buffer: noSkill }),
+    /No SKILL\.md found in ZIP/,
+  )
+
+  const multiple = makeZip([
+    { name: 'one/SKILL.md', content: Buffer.from('first') },
+    { name: 'two/SKILL.md', content: Buffer.from('second') },
+  ])
+  assert.throws(
+    () => extractSkillMarkdown({ originalname: 'multiple.zip', buffer: multiple }),
+    /multiple SKILL\.md files/,
+  )
 })
 
 test('skill uploads reject unsupported file types and malformed archives', () => {
-  assert.throws(() => extractSkillMarkdown({ originalname: 'skill.js', buffer: Buffer.from('code') }), /SKILL\.md file or a ZIP/)
-  assert.throws(() => extractSkillMarkdown({ originalname: 'skill.zip', buffer: Buffer.from('not zip') }), /SKILL\.md/)
+  assert.throws(
+    () => extractSkillMarkdown({ originalname: 'skill.js', buffer: Buffer.from('code') }),
+    /Upload a \.md file or a ZIP/,
+  )
+  assert.throws(
+    () => extractSkillMarkdown({ originalname: 'skill.zip', buffer: Buffer.from('not zip') }),
+    /ZIP could not be read/,
+  )
 })
 
 function makeZip(entries) {

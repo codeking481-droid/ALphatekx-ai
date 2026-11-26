@@ -91,3 +91,12 @@ test('BYOK plan foundation and scheduled posts migrations are additive and user-
     assert.doesNotMatch(migration, /\bDROP\s+(?:TABLE|COLUMN)|\bDELETE\s+FROM|\bTRUNCATE\b/i)
   }
 })
+
+test('skill source migration stores display provenance without deleting existing data', async () => {
+  const migration = await readFile(new URL('./010_skill_sources.sql', import.meta.url), 'utf8')
+  assert.match(migration, /ALTER TABLE user_skills/)
+  assert.match(migration, /ALTER TABLE skill_install_requests/)
+  assert.match(migration, /source TEXT NOT NULL DEFAULT 'upload'/)
+  assert.match(migration, /details->>'source'/)
+  assert.doesNotMatch(migration, /\bDROP\s+(?:TABLE|COLUMN)|\bDELETE\s+FROM|\bTRUNCATE\b/i)
+})

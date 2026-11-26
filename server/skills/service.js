@@ -53,10 +53,10 @@ export async function installSkill({
   const target = await writePersonalSkill({ userId, name: skill.name, markdown, skillsDir })
   try {
     await database.query(
-      `INSERT INTO user_skills (user_id, name, enabled)
-       VALUES ($1, $2, TRUE)
-       ON CONFLICT (user_id, name) DO UPDATE SET enabled = TRUE, updated_at = now()`,
-      [userId, skill.name],
+      `INSERT INTO user_skills (user_id, name, enabled, source)
+       VALUES ($1, $2, TRUE, $3)
+       ON CONFLICT (user_id, name) DO UPDATE SET enabled = TRUE, source = EXCLUDED.source, updated_at = now()`,
+      [userId, skill.name, persistedSource(source)],
     )
     await audit({
       userId,
@@ -69,7 +69,7 @@ export async function installSkill({
     await rmdir(path.dirname(target)).catch(() => {})
     throw error
   }
-  return { status: 'installed', skill: publicSkill(skill, { enabled: true }) }
+  return { status: 'installed', skill: publicSkill(skill, { enabled: true, source: displaySource(source) }) }
 }
 
 export async function setSkillEnabled({
@@ -154,7 +154,7 @@ export async function removeSkill({ userId, name, database = pool, skillsDir = c
 
 export async function listSkillApprovals({ userId, database = pool }) {
   const { rows } = await database.query(
-    `SELECT id, name, action, markdown, expires_at, created_at
+    `SELECT id, name, action, markdown, source, expires_at, created_at
      FROM skill_install_requests
      WHERE user_id = $1 AND status = 'pending' AND expires_at > now()
      ORDER BY created_at`,
@@ -172,7 +172,7 @@ export async function decideSkillApproval({ userId, approvalId, decision, databa
   try {
     await client.query('BEGIN')
     const { rows } = await client.query(
-      `SELECT id, name, action, markdown, status
+      `SELECT id, name, action, markdown, source, status
        FROM skill_install_requests
        WHERE id = $1 AND user_id = $2 AND status = 'pending' AND expires_at > now()
        FOR UPDATE`,
@@ -189,7 +189,7 @@ export async function decideSkillApproval({ userId, approvalId, decision, databa
           database: client,
           skillsDir,
           approvedDangerous: true,
-          source: 'approval',
+          source: request.source,
         })
         if (installed.status !== 'installed' && installed.status !== 'enabled') {
           throw new Error('Approved skill could not be installed.')
@@ -258,10 +258,10 @@ export async function initializeSkills(options = {}) {
 
 async function createSkillApproval({ userId, skill, action, database, source }) {
   const { rows } = await database.query(
-    `INSERT INTO skill_install_requests (user_id, name, action, markdown, status, expires_at)
-     VALUES ($1, $2, $3, $4, 'pending', now() + interval '30 minutes')
+    `INSERT INTO skill_install_requests (user_id, name, action, markdown, source, status, expires_at)
+     VALUES ($1, $2, $3, $4, $5, 'pending', now() + interval '30 minutes')
      RETURNING id, name, action, expires_at, created_at`,
-    [userId, skill.name, action, skill.markdown],
+    [userId, skill.name, action, skill.markdown, persistedSource(source)],
   )
   const approval = rows[0]
   await audit({
@@ -318,6 +318,14 @@ function publicSkill(skill, overrides) {
 
 function contentHash(value) {
   return createHash('sha256').update(value.replace(/\r\n/g, '\n')).digest('hex')
+}
+
+function persistedSource(source) {
+  return source === 'create-skill' || source === 'biz' ? 'biz' : 'upload'
+}
+
+function displaySource(source) {
+  return persistedSource(source) === 'biz' ? 'Biz' : 'Uploaded'
 }
 
 function isSkillName(value) {

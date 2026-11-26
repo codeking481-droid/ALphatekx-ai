@@ -6,7 +6,13 @@ import path from 'node:path'
 import { registerFileTools } from '../tools/file-tools.js'
 import { registerWebSearchTool } from '../tools/web-search.js'
 import { registerSkillCreateTool } from './skill-create.js'
-import { getSkillAllowedTools, matchSkill, parseSkillMarkdown, scanDirectory } from './loader.js'
+import {
+  getSkillAllowedTools,
+  matchSkill,
+  normalizeSkillUpload,
+  parseSkillMarkdown,
+  scanDirectory,
+} from './loader.js'
 
 registerWebSearchTool()
 registerFileTools()
@@ -61,6 +67,61 @@ Nothing.
 `
   assert.throws(() => parseSkillMarkdown(markdown), /unavailable tool/)
   assert.deepEqual(new Set(getSkillAllowedTools(null, true)), new Set(['web_search', 'file_read', 'file_list', 'file_write']))
+})
+
+test('Claude-style frontmatter and optional metadata normalize into a usable Biz skill', () => {
+  const markdown = `---
+name: Claude Research
+description: >-
+  Research a topic and summarize relevant sources.
+compatibility: Claude Desktop
+metadata:
+  author: Claude
+  category: research
+allowed-tools: Read
+---
+# Research carefully
+
+Use the provided instructions to answer research questions.
+`
+  const normalized = normalizeSkillUpload(markdown, 'research-export')
+  const skill = parseSkillMarkdown(normalized)
+  assert.equal(skill.name, 'claude-research')
+  assert.equal(skill.description, 'Research a topic and summarize relevant sources.')
+  assert.equal(skill.version, '1.0.0')
+  assert.deepEqual(new Set(skill.tools), new Set(['web_search', 'file_read', 'file_list']))
+  assert.equal(skill.body.startsWith('# Research carefully'), true)
+})
+
+test('missing or malformed upload frontmatter gets filename and first-line defaults', () => {
+  const malformed = `---
+name missing-colon
+---
+# A helpful first-line summary
+
+The skill instructions do not need Biz-specific headings.
+`
+  const normalized = normalizeSkillUpload(malformed, 'Claude Export')
+  const skill = parseSkillMarkdown(normalized)
+  assert.equal(skill.name, 'claude-export')
+  assert.equal(skill.description, 'A helpful first-line summary')
+  assert.equal(skill.version, '1.0.0')
+  assert.equal(skill.body.includes('do not need Biz-specific headings'), true)
+})
+
+test('uploads preserve registered protected tools but never grant their permissions', () => {
+  const markdown = `---
+name: protected-writer
+description: Draft and write a requested workspace file.
+tools:
+  - file_write
+---
+Write only after the user asks.
+`
+  const skill = parseSkillMarkdown(normalizeSkillUpload(markdown, 'writer'))
+  assert.deepEqual(skill.tools, ['file_write'])
+  assert.deepEqual(skill.permissions, ['tool:approved'])
+  assert.equal(skill.dangerous, true)
 })
 
 test('startup scanning skips an invalid skill and retains valid skills', async () => {
