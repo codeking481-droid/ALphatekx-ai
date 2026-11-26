@@ -120,13 +120,84 @@ export async function understandObjective(registry, provider, {
     ...(provider.capabilities?.structuredOutput ? { jsonSchema: OBJECTIVE_SPEC_SCHEMA } : {}),
   }
   const completion = await invokeWithProviderFallback(registry, provider, request, { userId, requestId, database, signal })
-  return {
-    objective: parseObjectiveSpec(completion.result.text),
-    provider: completion.provider,
-    model: completion.result.model || completion.provider.model,
-    usage: completion.result.usage || null,
-    fallbackUsed: completion.fallbackUsed === true,
+  let objective
+  let activeCompletion = completion
+  let objectiveFallback = false
+  try {
+    objective = parseObjectiveSpec(completion.result.text)
+  } catch {
+    const repairMessages = [
+      request.messages[0],
+      ...request.messages.slice(1, -1),
+      {
+        role: 'system',
+        content: [
+          'The previous response was not a valid ObjectiveSpec. Re-read the current user request and return only one complete JSON object matching the required ObjectiveSpec fields.',
+          'For ordinary questions, greetings, or requests asking what Biz can do, classify the request as a conversational answer. Do not invent missing information or mark an external action unless the user explicitly asks for a real-world side effect.',
+        ].join(' '),
+      },
+      request.messages.at(-1),
+      {
+        role: 'user',
+        content: 'Return a fresh ObjectiveSpec for the current request. Do not repeat the prior response.',
+      },
+    ]
+    activeCompletion = await invokeWithProviderFallback(
+      registry,
+      completion.provider,
+      {
+        messages: repairMessages,
+        ...(completion.provider.capabilities?.structuredOutput
+          ? { jsonSchema: OBJECTIVE_SPEC_SCHEMA }
+          : {}),
+      },
+      { userId, requestId, database, signal },
+    )
+    try {
+      objective = parseObjectiveSpec(activeCompletion.result.text)
+    } catch {
+      objective = createSafeConversationalObjective(message)
+      objectiveFallback = true
+    }
   }
+  return {
+    objective,
+    provider: activeCompletion.provider,
+    model: activeCompletion.result.model || activeCompletion.provider.model,
+    usage: activeCompletion.result.usage || completion.result.usage || null,
+    fallbackUsed: completion.fallbackUsed === true || activeCompletion.fallbackUsed === true,
+    objectiveFallback,
+  }
+}
+
+function createSafeConversationalObjective(message) {
+  const actionRequested = /\b(post|publish|send|reply|comment|create|delete|update|schedule|invite|transfer|submit)\b/i.test(message)
+  const missingInformation = actionRequested
+    ? [{
+        item: 'Action intent',
+        reason: 'The model could not reliably interpret this request, so no external action can be planned.',
+        requiredFor: 'drafting',
+        clarificationQuestion: 'I could not reliably understand the requested action. Please restate what you want me to do.',
+        safeAssumption: '',
+      }]
+    : []
+  return parseObjectiveSpec(JSON.stringify({
+    goal: actionRequested
+      ? 'Ask the user to restate the request because the action intent could not be validated.'
+      : 'Respond helpfully to the current user request without taking external action.',
+    deliverables: ['A helpful conversational response'],
+    resources: [],
+    scopeConstraints: [],
+    timeConstraints: [],
+    instructions: [],
+    successCriteria: ['Address the current user request clearly.'],
+    missingInformation,
+    ambiguities: [],
+    assumptions: [],
+    riskClassification: 'low',
+    planningRequired: false,
+    requiresExternalAction: false,
+  }))
 }
 
 export function parseObjectiveSpec(text) {

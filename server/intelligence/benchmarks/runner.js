@@ -198,6 +198,9 @@ export async function runRealBenchmarks({
         requestId: `benchmark-${scenario.id}`,
         database,
       }))
+      if (objectiveStage.value.objectiveFallback) {
+        throw new Error('The model returned invalid ObjectiveSpec JSON after one repair attempt.')
+      }
       objective = objectiveStage.value.objective
       activeProvider = evaluationRegistry.get(objectiveStage.value.provider.id)
       const checks = evaluateObjective(objective, scenario.realObjectiveExpect || scenario.expect).checks

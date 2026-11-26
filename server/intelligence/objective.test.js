@@ -56,6 +56,86 @@ test('objective validation rejects missing fields, unknown fields, and malformed
   assert.throws(() => parseObjectiveSpec(JSON.stringify(objective({ inventedFact: 'not allowed' }))), /missing or unsupported fields/)
 })
 
+test('objective understanding retries malformed model JSON before parsing', async () => {
+  let calls = 0
+  const provider = {
+    id: 'repairing',
+    model: 'test-model',
+    capabilities: { structuredOutput: false },
+    async generate(request) {
+      calls += 1
+      if (calls === 1) return { text: 'I can help with many things!' }
+      assert.match(request.messages.at(-1).content, /Return a fresh ObjectiveSpec/)
+      return { text: JSON.stringify(objective({ goal: 'Explain available capabilities.' })) }
+    },
+  }
+  const registry = {
+    list: () => [],
+    get: (id) => id === provider.id ? provider : null,
+  }
+  const result = await understandObjective(registry, provider, {
+    message: 'What can you do?',
+    userId: 'user-1',
+    database: { async query() { return { rowCount: 1 } } },
+  })
+
+  assert.equal(calls, 2)
+  assert.equal(result.objective.goal, 'Explain available capabilities.')
+  assert.equal(result.objectiveFallback, false)
+})
+
+test('repeated malformed ObjectiveSpec output falls back to safe conversational handling', async () => {
+  let calls = 0
+  const provider = {
+    id: 'malformed',
+    model: 'test-model',
+    capabilities: { structuredOutput: false },
+    async generate() {
+      calls += 1
+      return { text: 'not JSON' }
+    },
+  }
+  const registry = {
+    list: () => [],
+    get: (id) => id === provider.id ? provider : null,
+  }
+  const result = await understandObjective(registry, provider, {
+    message: 'What can you do?',
+    userId: 'user-1',
+    database: { async query() { return { rowCount: 1 } } },
+  })
+
+  assert.equal(calls, 2)
+  assert.equal(result.objectiveFallback, true)
+  assert.equal(result.objective.planningRequired, false)
+  assert.equal(result.objective.requiresExternalAction, false)
+  assert.equal(result.objective.clarificationRequired, false)
+})
+
+test('repeated malformed output never plans an external action from an unparsed request', async () => {
+  const provider = {
+    id: 'malformed-action',
+    model: 'test-model',
+    capabilities: { structuredOutput: false },
+    async generate() { return { text: 'not JSON' } },
+  }
+  const registry = {
+    list: () => [],
+    get: (id) => id === provider.id ? provider : null,
+  }
+  const result = await understandObjective(registry, provider, {
+    message: 'Post to LinkedIn: Biz is live.',
+    userId: 'user-1',
+    database: { async query() { return { rowCount: 1 } } },
+  })
+
+  assert.equal(result.objectiveFallback, true)
+  assert.equal(result.objective.planningRequired, false)
+  assert.equal(result.objective.requiresExternalAction, false)
+  assert.equal(result.objective.clarificationRequired, true)
+  assert.match(result.objective.clarificationQuestions[0], /reliably understand/)
+})
+
 test('external actions always require planning even when the model omits it', () => {
   const parsed = parseObjectiveSpec(JSON.stringify(objective({
     requiresExternalAction: true,

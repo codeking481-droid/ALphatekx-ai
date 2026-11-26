@@ -443,6 +443,22 @@ test('clear requests use ObjectiveSpec and skip planning and research', async ()
   assert.equal(database.state.commits, 1)
 })
 
+test('capability questions receive the registered tool list without planning an action', async () => {
+  const database = createDatabase()
+  const { registry, calls } = createRegistry()
+
+  await request({ database, registry, message: 'What can you do?' })
+
+  assert.deepEqual(calls.map(({ stage }) => stage), ['understanding', 'synthesis'])
+  const synthesis = calls.find(({ stage }) => stage === 'synthesis')
+  assert.ok(synthesis.messages.some(({ content }) =>
+    content.includes('Currently registered tools') &&
+    content.includes('web_search') &&
+    content.includes('linkedin_post')))
+  assert.ok(synthesis.messages.some(({ content }) =>
+    content.includes('describe only capabilities in the currently registered tools')))
+})
+
 test('a matched skill is loaded before planning and its tool allowlist and badge are preserved', async () => {
   const database = createDatabase()
   const { registry, calls } = createRegistry({
@@ -795,18 +811,20 @@ test('durable preference memories are saved automatically after a successful cha
   }])
 })
 
-test('invalid ObjectiveSpec output is rejected before planning or persistence', async () => {
+test('repeated invalid ObjectiveSpec output uses safe conversational handling without planning', async () => {
   const database = createDatabase()
   const { registry, calls } = createRegistry({
     handlers: { 'mock-primary': { understanding: () => ({ text: '{"goal":"incomplete"}' }) } },
   })
 
-  await assert.rejects(request({ database, registry, message: 'Prepare a plan.' }), /ObjectiveSpec has missing or unsupported fields/)
+  const result = await request({ database, registry, message: 'What can you do?' })
 
-  assert.deepEqual(calls.map(({ stage }) => stage), ['understanding'])
+  assert.deepEqual(calls.map(({ stage }) => stage), ['understanding', 'understanding', 'synthesis'])
+  assert.match(result.reply, /Here is the requested response/)
   assert.equal(database.state.agentRuns.length, 0)
-  assert.equal(database.state.commits, 0)
-  assert.equal(database.state.persistedMessages.length, 0)
+  assert.equal(database.state.persistedMessages.length, 2)
+  assert.equal(database.state.persistedTasks.length, 0)
+  assert.ok(calls.at(-1).messages.some(({ content }) => content.includes('could not validate its response')))
 })
 
 test('invalid PlanGraphs are rejected before agent assignment and persistence', async (t) => {
