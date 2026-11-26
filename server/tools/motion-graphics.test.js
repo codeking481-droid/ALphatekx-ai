@@ -1,8 +1,12 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { parsePlanGraph } from '../intelligence/plan-graph.js'
+import { buildPlanMessages, createFallbackToolPlan, parsePlanGraph } from '../intelligence/plan-graph.js'
 import { getTool } from './registry.js'
-import { isSafeMotionHtml, registerMotionGraphicsTool } from './motion-graphics.js'
+import {
+  createBuiltInMotionInput,
+  isSafeMotionHtml,
+  registerMotionGraphicsTool,
+} from './motion-graphics.js'
 
 test('motion graphic output permits inert CSS animation and rejects active or external content', () => {
   const unregister = registerMotionGraphicsTool()
@@ -11,6 +15,7 @@ test('motion graphic output permits inert CSS animation and rejects active or ex
     const safeHtml = '<!doctype html><html><head><style>@keyframes intro { from {opacity:0} to {opacity:1} }</style></head><body><h1>Biz</h1></body></html>'
     assert.equal(isSafeMotionHtml(safeHtml), true)
     assert.equal(tool.validate({ filename: 'biz-intro.html', html: safeHtml }), true)
+    assert.equal(tool.normalizeInput({ filename: 'biz-intro.html', html: safeHtml }).html, safeHtml)
     assert.equal(isSafeMotionHtml(safeHtml.replace('</body>', '<script>alert(1)</script></body>')), false)
     assert.equal(isSafeMotionHtml(safeHtml.replace('</body>', '<img src=https://example.com/a.png></body>')), false)
     assert.equal(tool.validate({ filename: '../biz.html', html: safeHtml }), false)
@@ -19,10 +24,10 @@ test('motion graphic output permits inert CSS animation and rejects active or ex
   }
 })
 
-test('motion plans safely default missing artifact fields instead of failing the request', () => {
+test('motion plans reject missing or unsafe generated HTML rather than silently using a template', () => {
   const unregister = registerMotionGraphicsTool()
   try {
-    const graph = parsePlanGraph(JSON.stringify({
+    const plan = JSON.stringify({
       tasks: [{
         id: 'make-intro',
         description: 'Create a motion graphics intro.',
@@ -41,25 +46,66 @@ test('motion plans safely default missing artifact fields instead of failing the
         maxAttempts: 1,
         completionConditions: ['The animation file is available.'],
       }],
-    }), {
+    })
+    assert.throws(() => parsePlanGraph(plan, {
       allowedToolIds: ['motion_graphics_create'],
       requiresExternalAction: true,
       message: 'Make a motion graphics intro for Biz.',
       skill: { name: 'motion-graphics', tools: ['motion_graphics_create'] },
-    })
+    }), /missing required information/)
 
-    const input = graph.tasks[0].toolInput
-    assert.equal(input.filename, 'biz-intro.html')
-    assert.equal(isSafeMotionHtml(input.html), true)
-    assert.match(input.html, /<h1>Biz<\/h1>/)
-    assert.match(input.html, /prefers-reduced-motion/)
+    const tool = getTool('motion_graphics_create')
+    const emptyInput = tool.normalizeInput({}, { message: 'Make an intro for Biz.' })
+    assert.equal(emptyInput.filename, 'biz-intro.html')
+    assert.equal(emptyInput.html, '')
+    assert.equal(tool.validate(emptyInput), false)
 
-    const untrustedTitle = getTool('motion_graphics_create').normalizeInput({}, {
-      message: 'Make an intro for <script>alert(1)</script>.',
+    const unsafeInput = tool.normalizeInput({
+      html: '<!doctype html><html><head></head><body><script>alert(1)</script></body></html>',
+    }, { message: 'Make an intro for Biz.' })
+    assert.equal(tool.validate(unsafeInput), false)
+
+    const fallback = createBuiltInMotionInput('Make an intro for Biz.')
+    assert.equal(isSafeMotionHtml(fallback.html), true)
+    assert.match(fallback.html, /BIZ_BUILT_IN_MOTION_TEMPLATE:providers-unavailable/)
+    assert.match(fallback.html, /<h1>Biz<\/h1>/)
+    assert.match(fallback.html, /prefers-reduced-motion/)
+  } finally {
+    unregister()
+  }
+})
+
+test('local fallback plans mark their motion artifact as a built-in template', () => {
+  const unregister = registerMotionGraphicsTool()
+  try {
+    const graph = createFallbackToolPlan({
+      message: 'Make a motion graphics intro for Biz.',
+      allowedToolIds: ['motion_graphics_create'],
     })
-    assert.equal(isSafeMotionHtml(untrustedTitle.html), true)
-    assert.match(untrustedTitle.html, /&lt;script&gt;/)
-    assert.doesNotMatch(untrustedTitle.html, /<script>/)
+    assert.equal(isSafeMotionHtml(graph.tasks[0].toolInput.html), true)
+    assert.match(graph.tasks[0].toolInput.html, /BIZ_BUILT_IN_MOTION_TEMPLATE:invalid-ai-output/)
+
+    const regenerated = createFallbackToolPlan({
+      message: 'Make it different',
+      allowedToolIds: ['motion_graphics_create'],
+    })
+    assert.equal(isSafeMotionHtml(regenerated.tasks[0].toolInput.html), true)
+  } finally {
+    unregister()
+  }
+})
+
+test('motion planning explicitly requests prompt-specific, distinct HTML and CSS', () => {
+  const unregister = registerMotionGraphicsTool()
+  try {
+    const [system] = buildPlanMessages({
+      message: 'Create a motion graphics intro for Biz',
+      objective: {},
+      allowedToolIds: ['motion_graphics_create'],
+    })
+    assert.match(system.content, /original HTML document/)
+    assert.match(system.content, /clearly different design/)
+    assert.match(system.content, /scripts, event handlers, and remote resources are not allowed/)
   } finally {
     unregister()
   }

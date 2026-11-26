@@ -17,13 +17,16 @@ Use when the user asks for an animated intro, logo animation, animated text, mot
 
 ## Steps
 
-1. Make a self-contained HTML document with a clear title and CSS keyframe animation.
-2. Keep the visual responsive, readable, and accessible, with a reduced-motion fallback. Use Emerald and Charcoal as the default Biz palette.
-3. Use inline CSS only. Do not include scripts, event handlers, remote resources, or embedded external content.
-4. Call `motion_graphics_create` with the complete HTML and a short `.html` filename.
-5. Tell the user the motion graphic is ready; include its preview and download links.
+1. Generate a new, self-contained HTML document whose composition, colors, visible text, shapes, and CSS keyframe motion specifically match the user's brief. Do not reuse a previous animation or a generic Biz template.
+2. Keep the visual responsive, readable, and accessible, with a reduced-motion fallback. Use Emerald and Charcoal only when they fit the request or as the default palette.
+3. Use inline CSS only. Scripts, event handlers, remote resources, and embedded external content are prohibited.
+4. For "make it different" or "make another one," use the earlier brief as context and deliberately change the visual direction.
+5. Call `motion_graphics_create` with the complete HTML and a short `.html` filename.
+6. Tell the user the motion graphic is ready; include its preview and download links.
 
 Use the subject and details the user provided. If optional style, timing, or layout preferences are missing, choose polished defaults and create a first draft instead of asking. For a Biz intro without a specified title, use "Biz".
+
+If AI providers are unavailable or cannot return safe, usable HTML, the built-in template is a last resort only. The tool result marks it as a built-in template, not AI-generated, and the chat must say so.
 
 ## What not to do
 

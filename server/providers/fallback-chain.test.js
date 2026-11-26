@@ -277,6 +277,7 @@ test('local fallback builds a motion graphics tool plan for deterministic HTML c
     })
     assert.equal(graph.tasks[0].requiredInputs[0].toolId, 'motion_graphics_create')
     assert.equal(isSafeMotionHtml(graph.tasks[0].toolInput.html), true)
+    assert.match(graph.tasks[0].toolInput.html, /BIZ_BUILT_IN_MOTION_TEMPLATE:providers-unavailable/)
     assert.match(graph.tasks[0].toolInput.html, /BIZ/)
     assert.match(graph.tasks[0].toolInput.html, /Chat Connect Automate/)
     assert.equal(getTool('motion_graphics_create').validate(graph.tasks[0].toolInput), true)

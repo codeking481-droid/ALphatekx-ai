@@ -1,6 +1,8 @@
 import { log } from '../observability/logger.js'
 import { ProviderError } from './errors.js'
 import { invokeModel } from '../intelligence/model-invocation.js'
+import { createBuiltInMotionInput } from '../tools/motion-graphics.js'
+import { isMotionGraphicsRequest } from '../intelligence/motion-graphics-intent.js'
 
 const MAX_RATE_LIMIT_RETRY_WAIT_MS = 15_000
 
@@ -17,7 +19,11 @@ export const localFallbackProvider = {
 export function formatFallbackTrace(trace) {
   if (!trace?.length) return ''
   const issues = trace.filter((item) => item.status === 'failed' || item.status === 'skipped')
-  if (!issues.length) return ''
+  if (!issues.length) {
+    return trace.at(-1)?.status === 'local'
+      ? 'No usable AI response was available; tried the local fallback.'
+      : ''
+  }
   const uniqueIssues = [...new Map(issues.map((item) => [item.provider, item])).values()]
   const providerNames = uniqueIssues.map((item) => {
     if (item.status === 'skipped') return `${item.name} not configured`
@@ -265,7 +271,7 @@ function createLocalTemplate(messages) {
   const userMessage = [...messages].reverse().find((message) => message.role === 'user')?.content || ''
   const firstSystemPrompt = messages.find((message) => message.role === 'system')?.content || ''
   if (/Extract an ObjectiveSpec as one JSON object/.test(firstSystemPrompt)) {
-    const motionRequest = /\b(motion graphics?|animation|animated intro|logo animation|animated text)\b/i.test(userMessage)
+    const motionRequest = isMotionGraphicsRequest(userMessage, messages)
     return JSON.stringify({
       goal: userMessage.slice(0, 1000) || 'Respond helpfully to the request.',
       deliverables: motionRequest ? ['A downloadable HTML animation'] : ['A helpful response'],
@@ -283,7 +289,8 @@ function createLocalTemplate(messages) {
     })
   }
   if (/Create a PlanGraph as one JSON object|Return a valid PlanGraph/.test(firstSystemPrompt)) {
-    const motionRequest = /\b(motion graphics?|animation|animated intro|logo animation|animated text)\b/i.test(userMessage)
+    const motionRequest = isMotionGraphicsRequest(userMessage, messages) ||
+      /motion-graphics regeneration/i.test(prompt)
     const externalLinkedInPost = /\b(?:post|publish|share)\b[\s\S]*\blinkedin\b|\blinkedin\b[\s\S]*\b(?:post|publish|share)\b/i.test(userMessage)
     const linkedInDraftRequest = /\b(?:draft|write|create|compose)\b[\s\S]{0,100}\blinkedin\b/i.test(userMessage)
     const toolId = motionRequest && prompt.includes('motion_graphics_create')
@@ -295,7 +302,7 @@ function createLocalTemplate(messages) {
       ? {
           id: 'local-tool-task',
           description: toolId === 'motion_graphics_create'
-            ? 'Create a Biz motion graphics intro using the local HTML template.'
+            ? 'Use the built-in motion graphics template because no usable AI-generated plan was available.'
             : 'Create the exact LinkedIn post draft for approval.',
           type: 'tool',
           requiredInputs: [{ kind: 'tool_output', description: `Result from ${toolId}.`, toolId }],
@@ -307,7 +314,9 @@ function createLocalTemplate(messages) {
           specialistRole: 'execution',
           maxAttempts: 1,
           completionConditions: ['Tool execution completed.'],
-          toolInput: toolId === 'linkedin_post' ? { text: buildLinkedInDraftText(userMessage) } : {},
+          toolInput: toolId === 'linkedin_post'
+            ? { text: buildLinkedInDraftText(userMessage) }
+            : createBuiltInMotionInput(userMessage, 'providers-unavailable'),
         }
       : {
           id: 'local-response-task',
@@ -331,7 +340,10 @@ function createLocalTemplate(messages) {
   const quotedRequest = String(userMessage).trim().replace(/\s+/g, ' ').slice(0, 1200)
   if (/execution report|motion graphic html was created/i.test(prompt) && /\/api\/files\/[a-f0-9-]{36}/i.test(prompt)) {
     const fileUrl = /\/api\/files\/[a-f0-9-]{36}/i.exec(prompt)?.[0]
-    return `I created the requested motion graphic with Biz's charcoal-and-emerald local template.\n\n[Preview the animation](${fileUrl}/preview) · [Download the HTML](${fileUrl})`
+    if (/generationSource["']?\s*:\s*["']built-in-template/i.test(prompt)) {
+      return `AI providers were down, so this is a built-in template, not AI-generated. Retry in 2 mins for real AI generation.\n\n[Preview the animation](${fileUrl}/preview) · [Download the HTML](${fileUrl})`
+    }
+    return `The requested AI-generated motion graphic is ready.\n\n[Preview the animation](${fileUrl}/preview) · [Download the HTML](${fileUrl})`
   }
   if (/^(?:hi|hello|hey|good morning|good afternoon|good evening)[!. ]*$/i.test(quotedRequest)) {
     return 'Hi! What can I help you with?'

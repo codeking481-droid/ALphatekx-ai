@@ -29,6 +29,7 @@ export async function createPlanGraph(registry, provider, {
   let activeProvider = completion.provider
   let fallbackUsed = completion.fallbackUsed === true
   let fallbackTrace = completion.fallbackTrace || null
+  let usedLocalFallbackPlan = false
   let planGraph
   try {
     planGraph = parsePlanGraph(result.text, {
@@ -79,7 +80,7 @@ export async function createPlanGraph(registry, provider, {
       })
     } catch (repairError) {
       const fallback = requiresExternalAction
-        ? createFallbackToolPlan({ message, allowedToolIds, skill })
+        ? createFallbackToolPlan({ message, allowedToolIds, skill, fallbackReason: 'invalid-ai-output' })
         : null
       if (!fallback) throw repairError
       planGraph = parsePlanGraph(JSON.stringify(fallback), {
@@ -89,7 +90,15 @@ export async function createPlanGraph(registry, provider, {
         skill,
         toolContext,
       })
+      usedLocalFallbackPlan = true
     }
+  }
+  if (usedLocalFallbackPlan) {
+    fallbackUsed = true
+    fallbackTrace = [
+      ...(fallbackTrace || []),
+      { name: 'Local fallback', provider: 'local-fallback', status: 'local', reason: 'invalid_ai_output' },
+    ]
   }
   return {
     planGraph,

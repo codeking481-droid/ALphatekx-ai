@@ -4,6 +4,7 @@ import { registerTool } from './registry.js'
 
 export const MAX_MOTION_HTML_BYTES = 256 * 1024
 const MOTION_GRAPHIC_CSP = "default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:; base-uri 'none'; form-action 'none'"
+const BUILT_IN_TEMPLATE_MARKER = /<!-- BIZ_BUILT_IN_MOTION_TEMPLATE:(providers-unavailable|invalid-ai-output) -->/
 
 function escapeHtml(value) {
   return value.replace(/[&<>"']/g, (character) => ({
@@ -115,6 +116,17 @@ function createDefaultMotionHtml(title) {
 </html>`
 }
 
+export function createBuiltInMotionInput(message, reason = 'providers-unavailable') {
+  const title = getMotionTitle(typeof message === 'string' ? message : '')
+  const safeReason = reason === 'invalid-ai-output' ? reason : 'providers-unavailable'
+  const html = createDefaultMotionHtml(title).replace(
+    /^(<!doctype html>)/i,
+    `$1\n<!-- BIZ_BUILT_IN_MOTION_TEMPLATE:${safeReason} -->`,
+  )
+  const filename = `${title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 70) || 'biz'}-intro.html`
+  return { filename, html }
+}
+
 export function isSafeMotionHtml(value) {
   if (typeof value !== 'string' || Buffer.byteLength(value, 'utf8') > MAX_MOTION_HTML_BYTES ||
     !/^\s*<!doctype html>/i.test(value) || !/<html\b[\s\S]*<\/html>\s*$/i.test(value)) return false
@@ -131,7 +143,7 @@ export function registerMotionGraphicsTool() {
   return registerTool({
     id: 'motion_graphics_create',
     name: 'Create motion graphic',
-    description: 'Create a downloadable, self-contained HTML motion graphic using inert HTML and CSS only. Generated code is never run on the server.',
+    description: 'Create a new, prompt-specific downloadable HTML/CSS motion graphic. Use the user\'s requested subject, text, colors, shapes, composition, and movement; do not reuse a generic template. Keep it self-contained and inert: scripts, event handlers, and remote resources are prohibited.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -152,7 +164,7 @@ export function registerMotionGraphicsTool() {
         : `${title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 70) || 'biz'}-intro.html`
       return {
         filename,
-        html: isSafeMotionHtml(input.html) ? input.html : createDefaultMotionHtml(title),
+        html: typeof input.html === 'string' ? input.html : '',
       }
     },
     auditDetails: (input) => ({
@@ -178,12 +190,17 @@ export function registerMotionGraphicsTool() {
           size: file.length,
         },
       })
+      const fallbackReason = BUILT_IN_TEMPLATE_MARKER.exec(input.html)?.[1] || null
       return {
         name: artifact.name,
         url: artifact.url,
         previewUrl: `${artifact.url}/preview`,
         size: artifact.size,
-        message: 'Motion graphic HTML was created. Preview it in Biz or download the standalone file.',
+        generationSource: fallbackReason ? 'built-in-template' : 'ai-generated',
+        ...(fallbackReason ? { fallbackReason } : {}),
+        message: fallbackReason
+          ? 'A built-in motion graphics template was used as the last resort; it is not AI-generated.'
+          : 'A new AI-generated motion graphic is ready. Preview it in Biz or download the standalone file.',
       }
     },
     verifyResult: (result) => Boolean(result &&

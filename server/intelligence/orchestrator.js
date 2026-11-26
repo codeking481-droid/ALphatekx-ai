@@ -19,6 +19,11 @@ import { saveAutomaticMemories } from '../memory/auto-save.js'
 import { parseScheduleIntent } from './scheduling.js'
 import { resolveLinkedInPostIntent } from './linkedin-post-intent.js'
 import { formatFallbackTrace } from '../providers/fallback-chain.js'
+import {
+  builtInMotionGraphicsReply,
+  isMotionGraphicsRegeneration,
+  isMotionGraphicsRequest,
+} from './motion-graphics-intent.js'
 
 const SYSTEM_PROMPT = `You are Biz, an AI assistant built for serious work.
 
@@ -165,15 +170,23 @@ export async function processChatRequest({
         signal,
       })
   const objective = understanding.objective
-  const generatedAnimationRequest = selectedSkill?.creates?.includes('animation') &&
-    selectedSkill.tools.includes('motion_graphics_create') &&
-    /\b(make|create|generate|design|build|animate|produce)\b/i.test(message)
-  if (generatedAnimationRequest && !objective.clarificationRequired) {
+  const motionGraphicsRegeneration = isMotionGraphicsRegeneration(message, context.messages)
+  const generatedAnimationRequest = isMotionGraphicsRequest(message, context.messages)
+  if (motionGraphicsRegeneration) {
+    contextMessages.push({
+      role: 'system',
+      content: 'This is a motion-graphics regeneration request. Create a new animation from the original brief in conversation history, but make the visual direction clearly different: change the composition, palette, typography, shapes, and movement. Do not reuse the previous HTML or fall back to a generic Biz design unless all AI providers fail.',
+    })
+  }
+  if (generatedAnimationRequest) {
+    objective.clarificationRequired = false
+    objective.clarificationQuestions = []
+    objective.executionQuestions = []
     objective.planningRequired = true
     objective.requiresExternalAction = true
     objective.riskClassification = 'low'
   }
-  if (understanding.objectiveFallback) {
+  if (understanding.objectiveFallback && !generatedAnimationRequest) {
     contextMessages.push({
       role: 'system',
       content: 'The structured intent parser could not validate its response, even after one retry. Answer the user conversationally using their exact request and the available context below. Do not initiate plans or external actions, and do not claim an action was completed.',
@@ -348,6 +361,10 @@ export async function processChatRequest({
   }
 
   const fallbackNotice = [...new Set(fallbackTraces.map(formatFallbackTrace).filter(Boolean))].join('\n')
+  const builtInMotionArtifact = executionReport?.tasks
+    .map((task) => task.output)
+    .find((output) => output?.generationSource === 'built-in-template')
+  if (builtInMotionArtifact) reply = builtInMotionGraphicsReply(builtInMotionArtifact)
   if (fallbackNotice && reply) reply = `${fallbackNotice}\n\n${reply}`
 
   if (jobId) throwIfAborted(signal)
